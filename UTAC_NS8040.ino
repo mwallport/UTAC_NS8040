@@ -67,12 +67,12 @@ Modbus ControllinoModbusMaster(MasterModbusAdd, RS485Serial, 0);
 // ModbusSlaveRegisters[5] - Sets the Relay output CONTROLLINO_R2 - only the value 0 or 1 is accepted.
 // ModbusSlaveRegisters[6] - Sets the Relay output CONTROLLINO_R2 - only the value 0 or 1 is accepted.
 // ModbusSlaveRegisters[7] - Sets the Relay output CONTROLLINO_R3 - only the value 0 or 1 is accepted.
-uint16_t ModbusSlaveRegisters[4];
+uint16_t ModbusSlaveRegisters[8];
 
 // This is an structe which contains a query to an slave device
-modbus_t ModbusQuery[2];
-//char relay1Array[3] = {1, 1, 1}, relay2Array[3] = {1, 1, 1};
+modbus_t ModbusQuery[4];
 char relay1Array[3] = {0, 0, 0}, relay2Array[3] = {0, 0, 0};
+char relay3Array[3] = {0, 0, 0}, relay4Array[3] = {0, 0, 0};
 
 uint8_t myState; // machine state
 uint8_t currentQuery; // pointer to message query
@@ -92,21 +92,33 @@ void setup() {
   Serial.println("-----------------------------------------");
   Serial.println("");
 #endif
-  // ModbusQuery 0: read registers
+
+  //
+  // get the PV
+  //
   ModbusQuery[0].u8id = 1; // slave address
   ModbusQuery[0].u8fct = 3; // function code (this one is registers read)
   ModbusQuery[0].u16RegAdd = 0x1000; // start address in slave
   ModbusQuery[0].u16CoilsNo = 2; // number of elements (coils or registers) to read
   ModbusQuery[0].au16reg = ModbusSlaveRegisters; // pointer to a memory array in the CONTROLLINO
-  //    ModbusSlaveRegisters[0] = 290;
 
-  //   ModbusQuery 1: write a single register
   ModbusQuery[1].u8id = 2; // slave address
   ModbusQuery[1].u8fct = 3; // function code (this one is write a single register)
   ModbusQuery[1].u16RegAdd = 0x1000; // start address in slave
   ModbusQuery[1].u16CoilsNo = 2; // number of elements (coils or registers) to write
   ModbusQuery[1].au16reg = ModbusSlaveRegisters + 2; // pointer to a memory array in the CONTROLLINO
-  //    ModbusSlaveRegisters[2] = 289; // initial value for the relays
+
+  ModbusQuery[2].u8id = 3; // slave address
+  ModbusQuery[2].u8fct = 3; // function code (this one is registers read)
+  ModbusQuery[2].u16RegAdd = 0x1000; // start address in slave
+  ModbusQuery[2].u16CoilsNo = 2; // number of elements (coils or registers) to read
+  ModbusQuery[2].au16reg = ModbusSlaveRegisters + 4; // pointer to a memory array in the CONTROLLINO
+
+  ModbusQuery[3].u8id = 4; // slave address
+  ModbusQuery[3].u8fct = 3; // function code (this one is write a single register)
+  ModbusQuery[3].u16RegAdd = 0x1000; // start address in slave
+  ModbusQuery[3].u16CoilsNo = 2; // number of elements (coils or registers) to write
+  ModbusQuery[3].au16reg = ModbusSlaveRegisters + 6; // pointer to a memory array in the CONTROLLINO
 
   ControllinoModbusMaster.begin( 19200 ); // baud-rate at 19200
   ControllinoModbusMaster.setTimeOut( 5000 ); // if there is no answer in 5000 ms, roll over
@@ -116,11 +128,13 @@ void setup() {
 
   pinMode(CONTROLLINO_R1, OUTPUT);
   pinMode(CONTROLLINO_R2, OUTPUT);
+  pinMode(CONTROLLINO_R3, OUTPUT);
+  pinMode(CONTROLLINO_R4, OUTPUT);
   pinMode(CONTROLLINO_D0, OUTPUT);
-//  digitalWrite(CONTROLLINO_R1, HIGH);
-//  digitalWrite(CONTROLLINO_R2, HIGH);
   digitalWrite(CONTROLLINO_R1, LOW);
   digitalWrite(CONTROLLINO_R2, LOW);
+  digitalWrite(CONTROLLINO_R3, LOW);
+  digitalWrite(CONTROLLINO_R4, LOW);
 
   startMillis = millis();
 }
@@ -138,6 +152,7 @@ void loop() {
       currentMillis = millis();
       if (currentMillis - startMillis >= period) myState++;
       break;
+
     case 1:
 #ifdef DEBUG
       Serial.print("---- Sending query ");
@@ -147,11 +162,14 @@ void loop() {
       ControllinoModbusMaster.query( ModbusQuery[currentQuery] ); // send query (only once)
       myState++;
       currentQuery++;
-      if (currentQuery == 2)
+/*
+      if (currentQuery == 4)
       {
         currentQuery = 0;
       }
+*/
       break;
+
     case 2:
       pollResponse = ControllinoModbusMaster.poll(); // check incoming messages
       if (ControllinoModbusMaster.getState() == COM_IDLE)
@@ -160,6 +178,7 @@ void loop() {
         // response from the slave was received
         myState = 0;
         startMillis = currentMillis;
+/*
         if (currentQuery == 0)
         {
 #ifdef DEBUG
@@ -168,23 +187,42 @@ void loop() {
           Serial.println("");
 #endif
         }
-        if (currentQuery == 1)
+*/
+
+        //
+        // currentQuery == 4 means all the requests have been sent and
+        // received
+        //
+        // go read the results and adjust relays
+        //
+        if (currentQuery == 4)
         {
+          // reset for the next group
+          currentQuery = 0;
+
           for (i = 0; i < 2; i++) {
             relay1Array[i + 1] = relay1Array[i];
             relay2Array[i + 1] = relay2Array[i];
+            relay3Array[i + 1] = relay3Array[i];
+            relay4Array[i + 1] = relay4Array[i];
           }
+
           if (abs(ModbusSlaveRegisters[0] - ModbusSlaveRegisters[1]) <= 30) {
             relay1Array[0] = 1;
           } else relay1Array[0] = 0;
-//            relay1Array[0] = 0;
-//          } else relay1Array[0] = 1;
 
           if (abs(ModbusSlaveRegisters[2] - ModbusSlaveRegisters[3]) <= 30) {
             relay2Array[0] = 1;
           } else relay2Array[0] = 0;
-//            relay2Array[0] = 0;
-//          } else relay2Array[0] = 1;
+
+          if (abs(ModbusSlaveRegisters[4] - ModbusSlaveRegisters[5]) <= 30) {
+            relay3Array[0] = 1;
+          } else relay3Array[0] = 0;
+
+          if (abs(ModbusSlaveRegisters[6] - ModbusSlaveRegisters[7]) <= 30) {
+            relay4Array[0] = 1;
+          } else relay4Array[0] = 0;
+
 #ifdef DEBUG
           // registers read was proceed
           Serial.println("---------- READ RESPONSE RECEIVED ----");
@@ -207,21 +245,59 @@ void loop() {
           svF = ModbusSlaveRegisters[3] / (float)10;
           Serial.println(svF, 1);
           Serial.println("-------------------------------------");
+
+          Serial.print("Slave ");
+          Serial.print(2, DEC);
+          Serial.print(" , Process Value: ");
+          pvF = ModbusSlaveRegisters[4] / (float)10;
+          Serial.print(pvF, 1);
+          Serial.print(" , Set Value: ");
+          svF = ModbusSlaveRegisters[5] / (float)10;
+          Serial.println(svF, 1);
+          Serial.println("-------------------------------------");
+          Serial.println("");
+          Serial.print("Slave ");
+          Serial.print(3, DEC);
+          Serial.print(" , Process Value: ");
+          pvF = ModbusSlaveRegisters[6] / (float)10;
+          Serial.print(pvF, 1);
+          Serial.print(" , Set Value: ");
+          svF = ModbusSlaveRegisters[7] / (float)10;
+          Serial.println(svF, 1);
+          Serial.println("-------------------------------------");
           Serial.println("");
 #endif
           if (relay1Array[0] == 0 && relay1Array[1] == 0 && relay1Array[2] == 0) {
             digitalWrite(CONTROLLINO_R1, LOW);
           }
+
           if (relay1Array[0] == 1 && relay1Array[1] == 1 && relay1Array[2] == 1) {
             digitalWrite(CONTROLLINO_R1, HIGH);
           }
+
           if (relay2Array[0] == 0 && relay2Array[1] == 0 && relay2Array[2] == 0) {
             digitalWrite(CONTROLLINO_R2, LOW);
           }
+
           if (relay2Array[0] == 1 && relay2Array[1] == 1 && relay2Array[2] == 1) {
             digitalWrite(CONTROLLINO_R2, HIGH);
           }
 
+          if (relay3Array[0] == 0 && relay3Array[1] == 0 && relay3Array[2] == 0) {
+            digitalWrite(CONTROLLINO_R3, LOW);
+          }
+
+          if (relay3Array[0] == 1 && relay3Array[1] == 1 && relay3Array[2] == 1) {
+            digitalWrite(CONTROLLINO_R3, HIGH);
+          }
+
+          if (relay4Array[0] == 0 && relay4Array[1] == 0 && relay4Array[2] == 0) {
+            digitalWrite(CONTROLLINO_R4, LOW);
+          }
+
+          if (relay4Array[0] == 1 && relay4Array[1] == 1 && relay4Array[2] == 1) {
+            digitalWrite(CONTROLLINO_R4, HIGH);
+          }
         }
         digitalWrite(CONTROLLINO_D0, LOW);
       }
