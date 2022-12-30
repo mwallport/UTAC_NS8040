@@ -1,145 +1,4 @@
-#include <Controllino.h>  /* Usage of CONTROLLINO library allows you to use CONTROLLINO_xx aliases in your sketch. */
-#include "ModbusRtu.h"  /* Usage of ModBusRtu library allows you to implement the Modbus RTU protocol in your sketch. */
-#include <HardwareSerial.h>
-/*
-   CONTROLLINO - Modbus RTU protocol Master example for MAXI and MEGA, Version 01.00
-
-   The sketch is relevant only for CONTROLLINO variants MAXI and MEGA (because of necessity of RS485 interface)!
-
-   This sketch is intended as an example of the communication between devices via RS485 with utilization the ModbusRTU protocol.
-   In this example the CONTROLLINO  is used as the Modbus master!
-   For more information about the Modbus protocol visit the website: http://modbus.org/
-
-   Modbus master device periodically reads Modbus 16bit registers (provided by the slave) and prints the current state to the debug Serial:
-  0 - analog CONTROLLINO_A0 value (0 - 1024)
-  1 - digital CONTROLLINO_D0 value (0/1)
-  2 - Modbus messages received
-  3 - Modbus messages transmitted
-
-   Modbus master device periodically writes and toggles Modbus 16bit registers:
-  4 - relay CONTROLLINO_R1 (0/1)
-  5 - relay CONTROLLINO_R2 (0/1)
-  6 - relay CONTROLLINO_R2 (0/1)
-  7 - relay CONTROLLINO_R3 (0/1)
-
-   To easily evaluate this example you need a second CONTROLLINO as Modbus slave running DemoModbusRTUSlave example sketch.
-   Please note that both CONTROLLINOs need 12/24V external supply and you need to interconnect GND, -, + signals of RS485 screw terminal.
-
-   Modbus Master-Slave library for Arduino (ModbusRtu.h) was taken from the website: https://github.com/smarmengol/Modbus-Master-Slave-for-Arduino
-   It was necessary to modify setting of the PORTJ for pins DE and RE control. These pins are located at the PORJ and on the pins PIN6(DE) and PIN5(RE).
-
-  IMPORTANT INFORMATION!
-  Please, select proper target board in Tools->Board->Controllino MAXI/MEGA before Upload to your CONTROLLINO.
-  (Please, refer to https://github.com/CONTROLLINO-PLC/CONTROLLINO_Library if you do not see the CONTROLLINOs in the Arduino IDE menu Tools->Board.)
-
-  Created 30 March 2017
-  by David
-
-  https://controllino.biz/
-
-  (Check https://github.com/CONTROLLINO-PLC/CONTROLLINO_Library for the latest CONTROLLINO related software stuff.)
-*/
-
-// This MACRO defines Modbus master address.
-// For any Modbus slave devices are reserved addresses in the range from 1 to 247.
-// Important note only address 0 is reserved for a Modbus master device!
-#define MasterModbusAdd  0
-#define SlaveModbusAdd  1
-
-// This MACRO defines number of the comport that is used for RS 485 interface.
-// For MAXI and MEGA RS485 is reserved UART Serial3.
-#define RS485Serial   3
-
-// The object ControllinoModbuSlave of the class Modbus is initialized with three parameters.
-// The first parametr specifies the address of the Modbus slave device.
-// The second parameter specifies type of the interface used for communication between devices - in this sketch is used RS485.
-// The third parameter can be any number. During the initialization of the object this parameter has no effect.
-Modbus ControllinoModbusMaster(MasterModbusAdd, RS485Serial, 0);
-
-// This uint16 array specified internal registers in the Modbus slave device.
-// Each Modbus device has particular internal registers that are available for the Modbus master.
-// In this example sketch internal registers are defined as follows:
-// (ModbusSlaveRegisters 0 - 3 read only and ModbusSlaveRegisters 4 - 7 write only from the Master perspective):
-// ModbusSlaveRegisters[0] - Read an analog value from the CONTROLLINO_A0 - returns value in the range from 0 to 1023.
-// ModbusSlaveRegisters[1] - Read an digital value from the CONTROLLINO_D0 - returns only the value 0 or 1.
-// ModbusSlaveRegisters[2] - Read the number of incoming messages - Communication diagnostic.
-// ModbusSlaveRegisters[3] - Read the number of number of outcoming messages - Communication diagnostic.
-// ModbusSlaveRegisters[4] - Sets the Relay output CONTROLLINO_R1 - only the value 0 or 1 is accepted.
-// ModbusSlaveRegisters[5] - Sets the Relay output CONTROLLINO_R2 - only the value 0 or 1 is accepted.
-// ModbusSlaveRegisters[6] - Sets the Relay output CONTROLLINO_R2 - only the value 0 or 1 is accepted.
-// ModbusSlaveRegisters[7] - Sets the Relay output CONTROLLINO_R3 - only the value 0 or 1 is accepted.
-uint16_t ModbusSlaveRegisters[8];
-
-// This is an structe which contains a query to an slave device
-modbus_t ModbusQuery[4];
-
-// SV_PV_DELTA is the absolute value (SV - PV) to be acheived to close the relay
-#define SV_PV_DELTA       30
-
-// SV versus PV history
-#define RELAY_HISTORY_DEPTH   3
-char relay1Array[RELAY_HISTORY_DEPTH] = {0, 0, 0};
-char relay2Array[RELAY_HISTORY_DEPTH] = {0, 0, 0};
-char relay3Array[RELAY_HISTORY_DEPTH] = {0, 0, 0};
-char relay4Array[RELAY_HISTORY_DEPTH] = {0, 0, 0};
-
-
-typedef enum READ_STATES_e
-{
-  TX_READ_WAIT_STATE  = 0,
-  TX_READ_REQ_STATE   = 1,
-  RX_READ_RESP_STATE  = 2
-} READ_STATES;
-
-READ_STATES myState; // machine state
-
-uint8_t currentQuery; // pointer to message query
-
-unsigned long startMillis;
-unsigned long currentMillis;
-const unsigned long period = 100;
-
-
-
-
-// enable handling of large commands
-#define MAX_CMD_BUFF_LENGTH   254
-
-// enable handling of large responses
-#define MAX_RSP_BUF_LENGTH    254
-
-// there is no length member in the protocol, input pkt lenght is 8
-#define UTAC_PKT_LENGHT       8
-
-// RS_232C comm buffers - total of 255 bytes each - I like big buffers and I cannot lie
-uint8_t rx_buff[MAX_CMD_BUFF_LENGTH + 1];
-uint8_t tx_buff[MAX_RSP_BUF_LENGTH + 1];
-
-// RS_232C serial port
-HardwareSerial* rs232port = &Serial1;
-
-// RS_232C speed
-#define RS232_SPEED   9600
-
-// set temperature cmd from UTAC
-#define SET_TEMP_CMD  0x012C
-
-// struct to hold the cmd contents
-typedef struct utac_cmd_s
-{
-  uint8_t   addr;   // RS485 id
-  uint8_t   msg;  // read or write
-  uint16_t  cmd;  // the command
-  uint16_t  val;  // the value for the command
-  uint16_t  crc;  // the crc-16 for the pkt
-} utac_cmd_t;
-
-
-void runReadStateMachine(void);
-void runWriteStateMachine(void);
-void dumpCurentSvPvHistoryAndRelays(void);
-int16_t getCmdFromRS232(uint8_t*, int32_t = UTAC_PKT_LENGHT, unsigned long = 1000);
-
+#include "UTAC_NS8040.h"
 
 #define DEBUG
 
@@ -383,22 +242,32 @@ void runWriteStateMachine(void)
 
   buff_len = getCmdFromRS232(rx_buff);
 
-  if( (0 == buff_len) )
+  if( (0 >= buff_len) )  // this is -1 or 0 return from getCmdFromRS232
   {
     #ifdef DEBUG
-    Serial.println("no rs232 pkt received");
+    Serial.println("runWriteStateMachine no rs232 pkt received");
     #endif
 
     // no pkt received
     return;
   }
 
+
   //
   // for now, we're only handling the 8 byte long cmd from email transaction
   //
   p_utac_cmd  = (utac_cmd_t*)rx_buff; // cast into the buffer
 
-  //handleUTACCmd(p_utac_cmd);
+  if( (false == validUTACCmd(p_utac_cmd)) )
+  {
+    #ifdef DEBUG
+    Serial.print("runWriteStateMachine invalid UTAC cmd received, flush rs232");
+    #endif
+
+    flushRS232();
+  }
+
+  // run the write state machine
 }
 
 
@@ -511,7 +380,7 @@ int16_t getCmdFromRS232(uint8_t* buff, int32_t rx_bytes, unsigned long tmo)
 
 
   #ifdef DEBUG
-  Serial.println("reading rs232...");
+  Serial.print("getCmdFromRS232 tmo is: "); Serial.println(tmo);
   #endif
 
 
@@ -556,10 +425,12 @@ int16_t getCmdFromRS232(uint8_t* buff, int32_t rx_bytes, unsigned long tmo)
 
 
   #ifdef DEBUG
-  Serial.print("getCmdFromRS232 received bytes: "); Serial.println(bytes_read);
+  Serial.print("getCmdFromRS232 received bytes: "); Serial.print(bytes_read);
+  Serial.print(", wanted rx_bytes: "); Serial.println(rx_bytes);
+  Serial.println("byte received: ");
   for(uint8_t i = 0; i < bytes_read; i++)
   {
-    Serial.print(rx_buff[i], 16); Serial.print(" ");
+    Serial.print(" 0x"); Serial.print(rx_buff[i], 16);
   }
   Serial.println("");
   #endif
@@ -570,15 +441,7 @@ int16_t getCmdFromRS232(uint8_t* buff, int32_t rx_bytes, unsigned long tmo)
     Serial.print("getCmdFromRS232 timed out reading rs232");
     #endif
 
-    return(-1);
-  }
-
-  if( (bytes_read != rx_bytes) )
-  {
-    #ifdef DEBUG
-    Serial.print("getCmdFromRS232 bytes read: "); Serial.print(bytes_read);
-    Serial.print("bytes expected: "); Serial.println(rx_bytes);
-    #endif
+    // we timed out reading bytes, Rx buffer is emtpy, no need flush
 
     return(-1);
   }
@@ -586,6 +449,99 @@ int16_t getCmdFromRS232(uint8_t* buff, int32_t rx_bytes, unsigned long tmo)
   return(bytes_read);
 }
 
+
+/*******************************************************************************
+*
+* remove all bytes from the Rx buffer
+*
+* called when the last packet read from the buffer was junk, this will remove
+* the rest of the junk
+*
+*******************************************************************************/
+void flushRS232(void)
+{
+  uint8_t junk;
+
+
+  while( (0 != rs232port->available()) )
+  {
+    junk = rs232port->read();
+  }
+}
+
+
+/*******************************************************************************
+*
+*
+/*
+typedef struct utac_cmd_s
+{
+  uint8_t   addr; // RS485 id
+  uint8_t   msg;  // read or write
+  uint16_t  cmd;  // the command
+  uint16_t  val;  // the value for the command
+  uint16_t  crc;  // the crc-16 for the pkt
+} utac_cmd_t;
+
+
+
+*******************************************************************************/
+bool validUTACCmd(utac_cmd_t* cmd)
+{
+
+  // rs486 id in range
+  if( (4 < cmd->addr) )
+  {
+    #ifdef DEBUG
+    #endif
+    return(false);
+  }
+
+  // msg is the write command
+  if( (MB_FC_WRITE_REGISTER != cmd->msg) )
+  {
+    #ifdef DEBUG
+    #endif
+    return(false);
+  }
+
+  // supported command
+  if( (UTAC_SET_TEMP_CMD == cmd->cmd) )
+  {
+    #ifdef DEBUG
+    #endif
+    return(false);
+  }
+}
+
+
+/*******************************************************************************
+*
+*
+*******************************************************************************/
+uint16_t getCRC16(uint16_t CRC, uint8_t byte)
+{
+    CRC = ( (CRC % 256) << 8 ) ^ ( CRC16_table_C[ (CRC >> 8) ^ byte ] );
+    return (CRC);
+}
+
+
+/*******************************************************************************
+*
+*
+*******************************************************************************/
+uint16_t calcCRC16(uint8_t* pBuff, uint16_t length)
+{
+    uint16_t    CRC = 0;
+
+
+    for(uint16_t i = 0; i < length; i++)
+    {
+        CRC = getCRC16(CRC, pBuff[i]);
+    }
+
+    return(CRC);
+}
 
 
 /* End of the example. Visit us at https://controllino.biz/ or contact us at info@controllino.biz if you have any questions or troubles. */
