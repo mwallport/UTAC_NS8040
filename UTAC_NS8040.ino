@@ -1,5 +1,6 @@
 #include <Controllino.h>  /* Usage of CONTROLLINO library allows you to use CONTROLLINO_xx aliases in your sketch. */
-#include "ModbusRtu.h"    /* Usage of ModBusRtu library allows you to implement the Modbus RTU protocol in your sketch. */
+#include "ModbusRtu.h"  /* Usage of ModBusRtu library allows you to implement the Modbus RTU protocol in your sketch. */
+#include <HardwareSerial.h>
 /*
    CONTROLLINO - Modbus RTU protocol Master example for MAXI and MEGA, Version 01.00
 
@@ -10,16 +11,16 @@
    For more information about the Modbus protocol visit the website: http://modbus.org/
 
    Modbus master device periodically reads Modbus 16bit registers (provided by the slave) and prints the current state to the debug Serial:
-    0 - analog CONTROLLINO_A0 value (0 - 1024)
-    1 - digital CONTROLLINO_D0 value (0/1)
-    2 - Modbus messages received
-    3 - Modbus messages transmitted
+  0 - analog CONTROLLINO_A0 value (0 - 1024)
+  1 - digital CONTROLLINO_D0 value (0/1)
+  2 - Modbus messages received
+  3 - Modbus messages transmitted
 
    Modbus master device periodically writes and toggles Modbus 16bit registers:
-    4 - relay CONTROLLINO_R1 (0/1)
-    5 - relay CONTROLLINO_R2 (0/1)
-    6 - relay CONTROLLINO_R2 (0/1)
-    7 - relay CONTROLLINO_R3 (0/1)
+  4 - relay CONTROLLINO_R1 (0/1)
+  5 - relay CONTROLLINO_R2 (0/1)
+  6 - relay CONTROLLINO_R2 (0/1)
+  7 - relay CONTROLLINO_R3 (0/1)
 
    To easily evaluate this example you need a second CONTROLLINO as Modbus slave running DemoModbusRTUSlave example sketch.
    Please note that both CONTROLLINOs need 12/24V external supply and you need to interconnect GND, -, + signals of RS485 screw terminal.
@@ -47,7 +48,7 @@
 
 // This MACRO defines number of the comport that is used for RS 485 interface.
 // For MAXI and MEGA RS485 is reserved UART Serial3.
-#define RS485Serial     3
+#define RS485Serial   3
 
 // The object ControllinoModbuSlave of the class Modbus is initialized with three parameters.
 // The first parametr specifies the address of the Modbus slave device.
@@ -73,7 +74,7 @@ uint16_t ModbusSlaveRegisters[8];
 modbus_t ModbusQuery[4];
 
 // SV_PV_DELTA is the absolute value (SV - PV) to be acheived to close the relay
-#define SV_PV_DELTA           30
+#define SV_PV_DELTA       30
 
 // SV versus PV history
 #define RELAY_HISTORY_DEPTH   3
@@ -85,9 +86,9 @@ char relay4Array[RELAY_HISTORY_DEPTH] = {0, 0, 0};
 
 typedef enum READ_STATES_e
 {
-    TX_READ_WAIT_STATE  = 0,
-    TX_READ_REQ_STATE   = 1,
-    RX_READ_RESP_STATE  = 2
+  TX_READ_WAIT_STATE  = 0,
+  TX_READ_REQ_STATE   = 1,
+  RX_READ_RESP_STATE  = 2
 } READ_STATES;
 
 READ_STATES myState; // machine state
@@ -100,15 +101,56 @@ const unsigned long period = 100;
 
 
 
+
+// enable handling of large commands
+#define MAX_CMD_BUFF_LENGTH   254
+
+// enable handling of large responses
+#define MAX_RSP_BUF_LENGTH    254
+
+// there is no length member in the protocol, input pkt lenght is 8
+#define UTAC_PKT_LENGHT       8
+
+// RS_232C comm buffers - total of 255 bytes each - I like big buffers and I cannot lie
+uint8_t rx_buff[MAX_CMD_BUFF_LENGTH + 1];
+uint8_t tx_buff[MAX_RSP_BUF_LENGTH + 1];
+
+// RS_232C serial port
+HardwareSerial* rs232port = &Serial1;
+
+// RS_232C speed
+#define RS232_SPEED   9600
+
+// set temperature cmd from UTAC
+#define SET_TEMP_CMD  0x012C
+
+// struct to hold the cmd contents
+typedef struct utac_cmd_s
+{
+  uint8_t   addr;   // RS485 id
+  uint8_t   msg;  // read or write
+  uint16_t  cmd;  // the command
+  uint16_t  val;  // the value for the command
+  uint16_t  crc;  // the crc-16 for the pkt
+} utac_cmd_t;
+
+
 void runReadStateMachine(void);
 void runWriteStateMachine(void);
 void dumpCurentSvPvHistoryAndRelays(void);
-
+int16_t getCmdFromRS232(uint8_t*, int32_t = UTAC_PKT_LENGHT, unsigned long = 1000);
 
 
 #define DEBUG
 
-void setup() {
+
+/*******************************************************************************
+*
+*
+*
+*******************************************************************************/
+void setup()
+{
   // initialize serial communication at 9600 bits per second:
 #ifdef DEBUG
   Serial.begin(9600);
@@ -117,6 +159,12 @@ void setup() {
   Serial.println("-----------------------------------------");
   Serial.println("");
 #endif
+
+  //
+  // startup the RS_232 connection
+  //
+  rs232port->begin(RS232_SPEED);
+
 
   //
   // get the PV
@@ -164,13 +212,15 @@ void setup() {
   startMillis = millis();
 }
 
-
+ 
+/*******************************************************************************
+*
+*
+*******************************************************************************/
 void loop()
 {
-
   runReadStateMachine();
   runWriteStateMachine();
-
 }
 
 
@@ -185,136 +235,170 @@ void runReadStateMachine(void)
 
   switch ( myState )
   {
-    case TX_READ_WAIT_STATE:
+  case TX_READ_WAIT_STATE:
+  {
+    currentMillis = millis();
+
+    if (currentMillis - startMillis >= period)
+    myState = TX_READ_REQ_STATE;
+
+    break;
+  }
+
+  case TX_READ_REQ_STATE:
+  {
+    ControllinoModbusMaster.query( ModbusQuery[currentQuery] ); // send query (only once)
+    myState = RX_READ_RESP_STATE;
+    currentQuery++;
+
+    break;
+  }
+
+  case RX_READ_RESP_STATE:
+  {
+    ControllinoModbusMaster.poll(); // check incoming messages
+
+    if (ControllinoModbusMaster.getState() == COM_IDLE)
     {
-      currentMillis = millis();
+    // response from the slave was received
 
-      if (currentMillis - startMillis >= period)
-        myState = TX_READ_REQ_STATE;
+    digitalWrite(CONTROLLINO_D0, HIGH);
 
-      break;
-    }
+    myState = TX_READ_WAIT_STATE;
 
-    case TX_READ_REQ_STATE:
+    startMillis = currentMillis;
+
+    //
+    // currentQuery == 4 means all the requests have been sent and
+    // received
+    //
+    // update the results arrays and adjust relays
+    //
+    if (currentQuery == 4)
     {
-      ControllinoModbusMaster.query( ModbusQuery[currentQuery] ); // send query (only once)
-      myState = RX_READ_RESP_STATE;
-      currentQuery++;
-
-      break;
-    }
-
-    case RX_READ_RESP_STATE:
-    {
-      ControllinoModbusMaster.poll(); // check incoming messages
-
-      if (ControllinoModbusMaster.getState() == COM_IDLE)
-      {
-        // response from the slave was received
-
-        digitalWrite(CONTROLLINO_D0, HIGH);
-
-        myState = TX_READ_WAIT_STATE;
-
-        startMillis = currentMillis;
-
-        //
-        // currentQuery == 4 means all the requests have been sent and
-        // received
-        //
-        // update the results arrays and adjust relays
-        //
-        if (currentQuery == 4)
-        {
-          // reset for the next group
-          currentQuery = 0;
+      // reset for the next group
+      currentQuery = 0;
 
 /* this erases history  -- BUT IS HOW IT USED TO BE -- put this back maybe
-          for (i = 0; i < 2; i++)
-          {
-            relay1Array[i + 1] = relay1Array[i];
-            relay2Array[i + 1] = relay2Array[i];
-            relay3Array[i + 1] = relay3Array[i];
-            relay4Array[i + 1] = relay4Array[i];
-          }
+      for (i = 0; i < 2; i++)
+      {
+      relay1Array[i + 1] = relay1Array[i];
+      relay2Array[i + 1] = relay2Array[i];
+      relay3Array[i + 1] = relay3Array[i];
+      relay4Array[i + 1] = relay4Array[i];
+      }
 */
-          //
-          // following will overwrite the last history at [2] with [1] then pull
-          // [1] to [2], the [0] to [1], then below we update [0]
-          //
-          for (i = RELAY_HISTORY_DEPTH - 1; i < 0; i--)
-          {
-            relay1Array[i] = relay1Array[i - 1];
-            relay2Array[i] = relay2Array[i - 1];
-            relay3Array[i] = relay3Array[i - 1];
-            relay4Array[i] = relay4Array[i - 1];
-          }
-
-          if (abs(ModbusSlaveRegisters[0] - ModbusSlaveRegisters[1]) <= SV_PV_DELTA)
-            relay1Array[0] = 1;
-          else
-            relay1Array[0] = 0;
-
-          if (abs(ModbusSlaveRegisters[2] - ModbusSlaveRegisters[3]) <= SV_PV_DELTA)
-            relay2Array[0] = 1;
-          else
-            relay2Array[0] = 0;
-
-          if (abs(ModbusSlaveRegisters[4] - ModbusSlaveRegisters[5]) <= SV_PV_DELTA)
-            relay3Array[0] = 1;
-          else
-            relay3Array[0] = 0;
-
-          if (abs(ModbusSlaveRegisters[6] - ModbusSlaveRegisters[7]) <= SV_PV_DELTA)
-            relay4Array[0] = 1;
-          else
-            relay4Array[0] = 0;
-
-
-          //
-          // udpate the relays
-          //
-          if (relay1Array[0] == 1 && relay1Array[1] == 1 && relay1Array[2] == 1) 
-            digitalWrite(CONTROLLINO_R1, HIGH);
-          else
-            digitalWrite(CONTROLLINO_R1, LOW);
-
-          if (relay2Array[0] == 1 && relay2Array[1] == 1 && relay2Array[2] == 1)
-            digitalWrite(CONTROLLINO_R2, HIGH);
-          else
-            digitalWrite(CONTROLLINO_R2, LOW);
-
-          if (relay3Array[0] == 1 && relay3Array[1] == 1 && relay3Array[2] == 1)
-            digitalWrite(CONTROLLINO_R3, HIGH);
-          else
-            digitalWrite(CONTROLLINO_R3, LOW);
-
-          if (relay4Array[0] == 1 && relay4Array[1] == 1 && relay4Array[2] == 1)
-            digitalWrite(CONTROLLINO_R4, HIGH);
-          else
-            digitalWrite(CONTROLLINO_R4, LOW);
-
-#ifdef DEBUG
-          dumpCurentSvPvHistoryAndRelays();
-#endif
-        }
-
-        digitalWrite(CONTROLLINO_D0, LOW);
+      //
+      // following will overwrite the last history at [2] with [1] then pull
+      // [1] to [2], the [0] to [1], then below we update [0]
+      //
+      for (i = RELAY_HISTORY_DEPTH - 1; i < 0; i--)
+      {
+      relay1Array[i] = relay1Array[i - 1];
+      relay2Array[i] = relay2Array[i - 1];
+      relay3Array[i] = relay3Array[i - 1];
+      relay4Array[i] = relay4Array[i - 1];
       }
 
-      break;
+      if (abs(ModbusSlaveRegisters[0] - ModbusSlaveRegisters[1]) <= SV_PV_DELTA)
+      relay1Array[0] = 1;
+      else
+      relay1Array[0] = 0;
+
+      if (abs(ModbusSlaveRegisters[2] - ModbusSlaveRegisters[3]) <= SV_PV_DELTA)
+      relay2Array[0] = 1;
+      else
+      relay2Array[0] = 0;
+
+      if (abs(ModbusSlaveRegisters[4] - ModbusSlaveRegisters[5]) <= SV_PV_DELTA)
+      relay3Array[0] = 1;
+      else
+      relay3Array[0] = 0;
+
+      if (abs(ModbusSlaveRegisters[6] - ModbusSlaveRegisters[7]) <= SV_PV_DELTA)
+      relay4Array[0] = 1;
+      else
+      relay4Array[0] = 0;
+
+
+      //
+      // udpate the relays
+      //
+      if (relay1Array[0] == 1 && relay1Array[1] == 1 && relay1Array[2] == 1) 
+      digitalWrite(CONTROLLINO_R1, HIGH);
+      else
+      digitalWrite(CONTROLLINO_R1, LOW);
+
+      if (relay2Array[0] == 1 && relay2Array[1] == 1 && relay2Array[2] == 1)
+      digitalWrite(CONTROLLINO_R2, HIGH);
+      else
+      digitalWrite(CONTROLLINO_R2, LOW);
+
+      if (relay3Array[0] == 1 && relay3Array[1] == 1 && relay3Array[2] == 1)
+      digitalWrite(CONTROLLINO_R3, HIGH);
+      else
+      digitalWrite(CONTROLLINO_R3, LOW);
+
+      if (relay4Array[0] == 1 && relay4Array[1] == 1 && relay4Array[2] == 1)
+      digitalWrite(CONTROLLINO_R4, HIGH);
+      else
+      digitalWrite(CONTROLLINO_R4, LOW);
+
+#ifdef DEBUG
+      dumpCurentSvPvHistoryAndRelays();
+#endif
     }
+
+    digitalWrite(CONTROLLINO_D0, LOW);
+    }
+
+    break;
+  }
   }
 }
 
 
 /*******************************************************************************
 *
+* - pkt looks like this
+* | Address | Message | Command | Value   | CRC-16  |
+* |  8 bits | 8 bits  | 16 bits | 16 bits | 16 bits |
+* |  01H  | 06H   | 01H.2CH | 03H.84H | xxxx  |
+*
+* - if read cmd from RS232
+* - parse cmd and is valid
+* - temperature set only for now ( 12/29/2022 )
+* - send the cmd to the Address
+* - return the result of the cmd
 *
 *******************************************************************************/
 void runWriteStateMachine(void)
 {
+  int16_t buff_len        = 0;
+  utac_cmd_t* p_utac_cmd  = 0;
 
+
+  // read cmd from RS232
+  memset(rx_buff, '\0', sizeof(rx_buff));  // MAX_CMD_BUFF_LENGTH + 1
+
+  buff_len = getCmdFromRS232(rx_buff);
+
+  if( (0 == buff_len) )
+  {
+    #ifdef DEBUG
+    Serial.println("no rs232 pkt received");
+    #endif
+
+    // no pkt received
+    return;
+  }
+
+  //
+  // for now, we're only handling the 8 byte long cmd from email transaction
+  //
+  p_utac_cmd  = (utac_cmd_t*)rx_buff; // cast into the buffer
+
+  //handleUTACCmd(p_utac_cmd);
 }
 
 
@@ -344,9 +428,9 @@ void dumpCurentSvPvHistoryAndRelays(void)
   Serial.print(", "); Serial.println(relay1Array[2]);
   Serial.print("CONTROLLINO_R1 is: ");
   if( (HIGH == digitalRead(CONTROLLINO_R1)) )
-    Serial.println("HIGH");
+  Serial.println("HIGH");
   else
-    Serial.println("LOW");
+  Serial.println("LOW");
   Serial.println("-------------------------------------");
 
   Serial.println("");
@@ -364,9 +448,9 @@ void dumpCurentSvPvHistoryAndRelays(void)
   Serial.print(", "); Serial.println(relay2Array[2]);
   Serial.print("CONTROLLINO_R2 is: ");
   if( (HIGH == digitalRead(CONTROLLINO_R2)) )
-    Serial.println("HIGH");
+  Serial.println("HIGH");
   else
-    Serial.println("LOW");
+  Serial.println("LOW");
   Serial.println("-------------------------------------");
   Serial.print("Slave ");
   Serial.print(2, DEC);
@@ -381,9 +465,9 @@ void dumpCurentSvPvHistoryAndRelays(void)
   Serial.print(", "); Serial.println(relay3Array[2]);
   Serial.print("CONTROLLINO_R3 is: ");
   if( (HIGH == digitalRead(CONTROLLINO_R3)) )
-    Serial.println("HIGH");
+  Serial.println("HIGH");
   else
-    Serial.println("LOW");
+  Serial.println("LOW");
   Serial.println("-------------------------------------");
   Serial.println("");
   Serial.print("Slave ");
@@ -399,11 +483,107 @@ void dumpCurentSvPvHistoryAndRelays(void)
   Serial.print(", "); Serial.println(relay4Array[2]);
   Serial.print("CONTROLLINO_R4 is: ");
   if( (HIGH == digitalRead(CONTROLLINO_R4)) )
-    Serial.println("HIGH");
+  Serial.println("HIGH");
   else
-    Serial.println("LOW");
+  Serial.println("LOW");
   Serial.println("-------------------------------------");
   Serial.println("");
+}
+
+
+/*******************************************************************************
+*
+* - pkt looks like this
+* | Address | Message | Command | Value   | CRC-16  |
+* |  8 bits | 8 bits  | 16 bits | 16 bits | 16 bits |
+* |  01H  | 06H   | 01H.2CH | 03H.84H | xxxx  |
+*
+* there is no length member, so until further notice, always read 8 bytes
+*
+* rx_bytes is the count of bytes expected to be read
+*
+*******************************************************************************/
+int16_t getCmdFromRS232(uint8_t* buff, int32_t rx_bytes, unsigned long tmo)
+{
+  bool timedOut     = false;
+  int32_t bytes_read = 0;
+  unsigned long startTime = millis();
+
+
+  #ifdef DEBUG
+  Serial.println("reading rs232...");
+  #endif
+
+
+  //
+  // if nothing on the wire, don't try to read
+  //
+  if( (0 == rs232port->available()) )
+  {
+    #ifdef DEBUG
+    Serial.println("no data available in rs232");
+    #endif
+
+    return(0);
+  }
+
+
+  //
+  // try to read a packet for a total of TimeoutMs milliseconds
+  // but only start to read the bytes if data is present
+  //
+  while( (!timedOut) && (bytes_read < rx_bytes) ) 
+  {
+    if( ((millis() - startTime) > tmo) )
+    {
+      timedOut = true;
+    } else
+    {
+      if( (rs232port->available()) )
+      {
+        buff[bytes_read++] = rs232port->read();
+
+      } else
+      {
+        //
+        // no data available, wait a bit before checking again withing the
+        // tmo window
+        //
+        delay(128);
+      }
+    }
+  }
+
+
+  #ifdef DEBUG
+  Serial.print("getCmdFromRS232 received bytes: "); Serial.println(bytes_read);
+  for(uint8_t i = 0; i < bytes_read; i++)
+  {
+    Serial.print(rx_buff[i], 16); Serial.print(" ");
+  }
+  Serial.println("");
+  #endif
+
+  if( (true == timedOut) )
+  {
+    #ifdef DEBUG
+    Serial.print("getCmdFromRS232 timed out reading rs232");
+    #endif
+
+    return(-1);
+  }
+
+  if( (bytes_read != rx_bytes) )
+  {
+    #ifdef DEBUG
+    Serial.print("getCmdFromRS232 bytes read: "); Serial.print(bytes_read);
+    Serial.print("bytes expected: "); Serial.println(rx_bytes);
+    #endif
+
+    return(-1);
+  }
+
+  return(bytes_read);
 }
 
 
