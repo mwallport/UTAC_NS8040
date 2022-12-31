@@ -11,64 +11,18 @@
 void setup()
 {
   // initialize serial communication at 9600 bits per second:
-#ifdef DEBUG
+  #ifdef DEBUG
   Serial.begin(9600);
   Serial.println("-----------------------------------------");
   Serial.println("CONTROLLINO Modbus RTU Master Test Sketch");
   Serial.println("-----------------------------------------");
   Serial.println("");
-#endif
+  #endif
 
   //
-  // startup the RS_232 connection
+  // initialize
   //
-  rs232port->begin(RS232_SPEED);
 
-
-  //
-  // get the PV
-  //
-  ModbusQuery[0].u8id = 1; // slave address
-  ModbusQuery[0].u8fct = 3; // function code (this one is registers read)
-  ModbusQuery[0].u16RegAdd = 0x1000; // start address in slave
-  ModbusQuery[0].u16CoilsNo = 2; // number of elements (coils or registers) to read
-  ModbusQuery[0].au16reg = ModbusSlaveRegisters; // pointer to a memory array in the CONTROLLINO
-
-  ModbusQuery[1].u8id = 2; // slave address
-  ModbusQuery[1].u8fct = 3; // function code (this one is write a single register)
-  ModbusQuery[1].u16RegAdd = 0x1000; // start address in slave
-  ModbusQuery[1].u16CoilsNo = 2; // number of elements (coils or registers) to write
-  ModbusQuery[1].au16reg = ModbusSlaveRegisters + 2; // pointer to a memory array in the CONTROLLINO
-
-  ModbusQuery[2].u8id = 3; // slave address
-  ModbusQuery[2].u8fct = 3; // function code (this one is registers read)
-  ModbusQuery[2].u16RegAdd = 0x1000; // start address in slave
-  ModbusQuery[2].u16CoilsNo = 2; // number of elements (coils or registers) to read
-  ModbusQuery[2].au16reg = ModbusSlaveRegisters + 4; // pointer to a memory array in the CONTROLLINO
-
-  ModbusQuery[3].u8id = 4; // slave address
-  ModbusQuery[3].u8fct = 3; // function code (this one is write a single register)
-  ModbusQuery[3].u16RegAdd = 0x1000; // start address in slave
-  ModbusQuery[3].u16CoilsNo = 2; // number of elements (coils or registers) to write
-  ModbusQuery[3].au16reg = ModbusSlaveRegisters + 6; // pointer to a memory array in the CONTROLLINO
-
-  ControllinoModbusMaster.begin( 19200 ); // baud-rate at 19200
-  ControllinoModbusMaster.setTimeOut( 5000 ); // if there is no answer in 5000 ms, roll over
-
-  myState = TX_READ_WAIT_STATE;
-  currentQuery = 0;
-
-  pinMode(CONTROLLINO_R1, OUTPUT);
-  pinMode(CONTROLLINO_R2, OUTPUT);
-  pinMode(CONTROLLINO_R3, OUTPUT);
-  pinMode(CONTROLLINO_R4, OUTPUT);
-  pinMode(CONTROLLINO_D0, OUTPUT);
-  digitalWrite(CONTROLLINO_R1, LOW);
-  digitalWrite(CONTROLLINO_R2, LOW);
-  digitalWrite(CONTROLLINO_R3, LOW);
-  digitalWrite(CONTROLLINO_R4, LOW);
-
-  startMillis = millis();
 }
 
  
@@ -79,7 +33,8 @@ void setup()
 void loop()
 {
   runReadStateMachine();
-  runWriteStateMachine();
+
+  handleRS232Cmd();
 }
 
 
@@ -94,126 +49,178 @@ void runReadStateMachine(void)
 
   switch ( myState )
   {
-  case TX_READ_WAIT_STATE:
-  {
-    currentMillis = millis();
-
-    if (currentMillis - startMillis >= period)
-    myState = TX_READ_REQ_STATE;
-
-    break;
-  }
-
-  case TX_READ_REQ_STATE:
-  {
-    ControllinoModbusMaster.query( ModbusQuery[currentQuery] ); // send query (only once)
-    myState = RX_READ_RESP_STATE;
-    currentQuery++;
-
-    break;
-  }
-
-  case RX_READ_RESP_STATE:
-  {
-    ControllinoModbusMaster.poll(); // check incoming messages
-
-    if (ControllinoModbusMaster.getState() == COM_IDLE)
+    case TX_READ_WAIT_STATE:
     {
-    // response from the slave was received
-
-    digitalWrite(CONTROLLINO_D0, HIGH);
-
-    myState = TX_READ_WAIT_STATE;
-
-    startMillis = currentMillis;
-
-    //
-    // currentQuery == 4 means all the requests have been sent and
-    // received
-    //
-    // update the results arrays and adjust relays
-    //
-    if (currentQuery == 4)
+      currentMillis = millis();
+  
+      if (currentMillis - startMillis >= period)
+        myState = TX_READ_REQ_STATE;
+  
+      break;
+    }
+  
+    case TX_READ_REQ_STATE:
     {
-      // reset for the next group
-      currentQuery = 0;
-
-/* this erases history  -- BUT IS HOW IT USED TO BE -- put this back maybe
-      for (i = 0; i < 2; i++)
-      {
-      relay1Array[i + 1] = relay1Array[i];
-      relay2Array[i + 1] = relay2Array[i];
-      relay3Array[i + 1] = relay3Array[i];
-      relay4Array[i + 1] = relay4Array[i];
-      }
-*/
-      //
-      // following will overwrite the last history at [2] with [1] then pull
-      // [1] to [2], the [0] to [1], then below we update [0]
-      //
-      for (i = RELAY_HISTORY_DEPTH - 1; i < 0; i--)
-      {
-      relay1Array[i] = relay1Array[i - 1];
-      relay2Array[i] = relay2Array[i - 1];
-      relay3Array[i] = relay3Array[i - 1];
-      relay4Array[i] = relay4Array[i - 1];
-      }
-
-      if (abs(ModbusSlaveRegisters[0] - ModbusSlaveRegisters[1]) <= SV_PV_DELTA)
-      relay1Array[0] = 1;
-      else
-      relay1Array[0] = 0;
-
-      if (abs(ModbusSlaveRegisters[2] - ModbusSlaveRegisters[3]) <= SV_PV_DELTA)
-      relay2Array[0] = 1;
-      else
-      relay2Array[0] = 0;
-
-      if (abs(ModbusSlaveRegisters[4] - ModbusSlaveRegisters[5]) <= SV_PV_DELTA)
-      relay3Array[0] = 1;
-      else
-      relay3Array[0] = 0;
-
-      if (abs(ModbusSlaveRegisters[6] - ModbusSlaveRegisters[7]) <= SV_PV_DELTA)
-      relay4Array[0] = 1;
-      else
-      relay4Array[0] = 0;
-
-
-      //
-      // udpate the relays
-      //
-      if (relay1Array[0] == 1 && relay1Array[1] == 1 && relay1Array[2] == 1) 
-      digitalWrite(CONTROLLINO_R1, HIGH);
-      else
-      digitalWrite(CONTROLLINO_R1, LOW);
-
-      if (relay2Array[0] == 1 && relay2Array[1] == 1 && relay2Array[2] == 1)
-      digitalWrite(CONTROLLINO_R2, HIGH);
-      else
-      digitalWrite(CONTROLLINO_R2, LOW);
-
-      if (relay3Array[0] == 1 && relay3Array[1] == 1 && relay3Array[2] == 1)
-      digitalWrite(CONTROLLINO_R3, HIGH);
-      else
-      digitalWrite(CONTROLLINO_R3, LOW);
-
-      if (relay4Array[0] == 1 && relay4Array[1] == 1 && relay4Array[2] == 1)
-      digitalWrite(CONTROLLINO_R4, HIGH);
-      else
-      digitalWrite(CONTROLLINO_R4, LOW);
-
-#ifdef DEBUG
-      dumpCurentSvPvHistoryAndRelays();
-#endif
+      ControllinoModbusMaster.query( ModbusQuery[currentQuery] ); // send query (only once)
+      myState = RX_READ_RESP_STATE;
+      currentQuery++;
+  
+      break;
     }
+  
+    case RX_READ_RESP_STATE:
+    {
+      ControllinoModbusMaster.poll(); // check incoming messages
+  
+      if (ControllinoModbusMaster.getState() == COM_IDLE)
+      {
+        // response from the slave was received
+  
+        digitalWrite(CONTROLLINO_D0, HIGH);
+  
+        myState = TX_READ_WAIT_STATE;
+  
+        startMillis = currentMillis;
+  
+        //
+        // currentQuery == 4 means all the requests have been sent and
+        // received
+        //
+        // update the results arrays and adjust relays
+        //
+        if (currentQuery == 4)
+        {
+          // reset for the next group
+          currentQuery = 0;
+  
+          /* this erases history  -- BUT IS HOW IT USED TO BE -- put this back maybe
+          for (i = 0; i < 2; i++)
+          {
+            relay1Array[i + 1] = relay1Array[i];
+            relay2Array[i + 1] = relay2Array[i];
+            relay3Array[i + 1] = relay3Array[i];
+            relay4Array[i + 1] = relay4Array[i];
+          }
+          */
 
-    digitalWrite(CONTROLLINO_D0, LOW);
-    }
+          //
+          // following will overwrite the last history at [2] with [1] then pull
+          // [1] to [2], the [0] to [1], then below we update [0]
+          //
+          for (i = RELAY_HISTORY_DEPTH - 1; i < 0; i--)
+          {
+            relay1Array[i] = relay1Array[i - 1];
+            relay2Array[i] = relay2Array[i - 1];
+            relay3Array[i] = relay3Array[i - 1];
+            relay4Array[i] = relay4Array[i - 1];
+          }
+  
+          if (abs(ModbusSlaveRegisters[0] - ModbusSlaveRegisters[1]) <= SV_PV_DELTA)
+            relay1Array[0] = 1;
+          else
+            relay1Array[0] = 0;
+    
+          if (abs(ModbusSlaveRegisters[2] - ModbusSlaveRegisters[3]) <= SV_PV_DELTA)
+            relay2Array[0] = 1;
+          else
+            relay2Array[0] = 0;
+    
+          if (abs(ModbusSlaveRegisters[4] - ModbusSlaveRegisters[5]) <= SV_PV_DELTA)
+            relay3Array[0] = 1;
+          else
+            relay3Array[0] = 0;
+    
+          if (abs(ModbusSlaveRegisters[6] - ModbusSlaveRegisters[7]) <= SV_PV_DELTA)
+            relay4Array[0] = 1;
+          else
+            relay4Array[0] = 0;
+  
+          //
+          // udpate the relays
+          //
+          if (relay1Array[0] == 1 && relay1Array[1] == 1 && relay1Array[2] == 1) 
+            digitalWrite(CONTROLLINO_R1, HIGH);
+          else
+            digitalWrite(CONTROLLINO_R1, LOW);
+  
+          if (relay2Array[0] == 1 && relay2Array[1] == 1 && relay2Array[2] == 1)
+            digitalWrite(CONTROLLINO_R2, HIGH);
+          else
+            digitalWrite(CONTROLLINO_R2, LOW);
+  
+          if (relay3Array[0] == 1 && relay3Array[1] == 1 && relay3Array[2] == 1)
+            digitalWrite(CONTROLLINO_R3, HIGH);
+          else
+            digitalWrite(CONTROLLINO_R3, LOW);
+  
+          if (relay4Array[0] == 1 && relay4Array[1] == 1 && relay4Array[2] == 1)
+            digitalWrite(CONTROLLINO_R4, HIGH);
+          else
+            digitalWrite(CONTROLLINO_R4, LOW);
+  
+          #ifdef DEBUG
+          dumpCurrentSvPvHistoryAndRelays();
+          #endif
 
-    break;
-  }
-  }
+          //
+          // how often to log  - on a period or after the set cmd has been handled
+          //
+          if( (((millis() - last_data_point_log_time) > DATA_POINT_LOG_PERIOD_MS) ||
+                (true == log_data_point)) )
+          {
+            log_data_point            = false;
+            last_data_point_log_time  = millis();
+
+            // log add a data point 
+            logDataPoint(
+              ModbusSlaveRegisters[0],  ModbusSlaveRegisters[1],  // unit 1 sv, pv
+              ModbusSlaveRegisters[2],  ModbusSlaveRegisters[3],  // unit 2 sv, pv
+              ModbusSlaveRegisters[4],  ModbusSlaveRegisters[5],  // unit 3 sv, pv
+              ModbusSlaveRegisters[6],  ModbusSlaveRegisters[7],  // unit 4 sv, pv
+              digitalRead(CONTROLLINO_R1),  // realy 1 status
+              digitalRead(CONTROLLINO_R2),  // relay 2 status
+              digitalRead(CONTROLLINO_R3),  // relay 3 status
+              digitalRead(CONTROLLINO_R4)   // relay 4 status
+            );
+          }
+
+          //
+          // 1st time after boot up only !
+          //
+          // need to set the Sv in the ModbusSet structures becuase ..
+          // - the command to set the Sv specifies one RS485 id
+          // - the write state machine will write Sv to all the RS486 Ids
+          // - so we need to iniailize the write strucutres with the current
+          //    Sv - so when the write state machine runs, it will not
+          //    overwrite the Sv w/ 0
+          // - i.e. until the Sv command comes for an ID, write back the current
+          //    value
+          //
+          if( (false == have_initial_sv) )
+          {
+            have_initial_sv = true;
+
+            set_values[0] = ModbusSlaveRegisters[1];
+            set_values[1] = ModbusSlaveRegisters[3];
+            set_values[2] = ModbusSlaveRegisters[5];
+            set_values[3] = ModbusSlaveRegisters[7];
+
+            #ifdef DEBUG
+            Serial.print("initial store of Sv(s): ");
+            Serial.print(set_values[0], 16); Serial.print(", ");
+            Serial.print(set_values[1], 16); Serial.print(", ");
+            Serial.print(set_values[2], 16); Serial.print(", ");
+            Serial.print(set_values[3], 16); Serial.println("");
+            #endif
+          }
+        } //end if (currentQuery == 4)
+  
+        digitalWrite(CONTROLLINO_D0, LOW);
+      } // end if (ControllinoModbusMaster.getState() == COM_IDLE)
+  
+      break;
+    } // end case RX_READ_RESP_STATE:
+  } // end switch ( myState )
 }
 
 
@@ -233,39 +240,15 @@ void runReadStateMachine(void)
 *******************************************************************************/
 void runWriteStateMachine(void)
 {
-  int16_t buff_len        = 0;
-  utac_cmd_t* p_utac_cmd  = 0;
 
-
-  // read cmd from RS232
-  memset(rx_buff, '\0', sizeof(rx_buff));  // MAX_CMD_BUFF_LENGTH + 1
-
-  buff_len = getCmdFromRS232(rx_buff);
-
-  if( (0 >= buff_len) )  // this is -1 or 0 return from getCmdFromRS232
+  #ifdef DEBUG
+  Serial.println("runWriteStateMachine entered, writting:");
+  for(int i = 0; i < 4; i++)
   {
-    #ifdef DEBUG
-    Serial.println("runWriteStateMachine no rs232 pkt received");
-    #endif
-
-    // no pkt received
-    return;
+    Serial.print("id: "); Serial.print(i); Serial.print(" Sv: ");
+    Serial.println(ModbusSet[i].au16reg[0], 16);
   }
-
-
-  //
-  // for now, we're only handling the 8 byte long cmd from email transaction
-  //
-  p_utac_cmd  = (utac_cmd_t*)rx_buff; // cast into the buffer
-
-  if( (false == validUTACCmd(p_utac_cmd)) )
-  {
-    #ifdef DEBUG
-    Serial.print("runWriteStateMachine invalid UTAC cmd received, flush rs232");
-    #endif
-
-    flushRS232();
-  }
+  #endif
 
   // run the write state machine
 }
@@ -275,7 +258,7 @@ void runWriteStateMachine(void)
 *
 *
 *******************************************************************************/
-void dumpCurentSvPvHistoryAndRelays(void)
+void dumpCurrentSvPvHistoryAndRelays(void)
 {
   float pvF, svF;
 
@@ -541,6 +524,327 @@ uint16_t calcCRC16(uint8_t* pBuff, uint16_t length)
     }
 
     return(CRC);
+}
+
+
+/*******************************************************************************
+*
+* until a set clock cmd is added, set the time to:
+*
+* Sunday Jan 1, 2023 00:00:00
+*
+*******************************************************************************/
+void initializeRTC(void)
+{
+  // initialize the RTC
+  Controllino_RTC_init();
+
+  Controllino_SetTimeDate(
+      1,    // Sunday Jan 1st - this is the date day, i.e. 1st
+      0,    // day of the week, Sunday = 0
+      0,    // month Jan = 0
+      123,  // yead - 1900; 2023 - 1900 = 123
+      0,    // hour
+      0,    // minute
+      0     // seconds
+  ); 
+}
+
+
+/*******************************************************************************
+*
+* format of time stamp not defined yet
+*
+* going to sum the return parameters from 
+*
+* char Controllino_ReadTimeDate(
+*     unsigned char *aDay, unsigned char *aWeekDay, unsigned char *aMonth,
+*     unsigned char *aYear, unsigned char *aHour, unsigned char *aMinute,
+*     unsigned char *aSecond)
+*
+*******************************************************************************/
+#define NUM_RTC_PARAMS  7
+uint16_t getTimeStamp(void)
+{
+  uint32_t  timestamp = 0;
+  unsigned char data[NUM_RTC_PARAMS];
+  
+
+  // get the current time from the RTC
+  Controllino_ReadTimeDate(&data[0], &data[1], &data[2], &data[3],
+                          &data[4], &data[5], &data[6]);
+
+  // sum the return parameters to get a number, timestamp
+  for(int i = 0; i < NUM_RTC_PARAMS; i++)
+  {
+    timestamp += (uint8_t)data[i];
+  }
+
+  #ifdef DEBUG
+  Serial.print("getTimeStamp returning: "); Serial.println(timestamp);
+  #endif
+
+  return(timestamp);
+}
+
+
+/*******************************************************************************
+*
+*
+*
+*******************************************************************************/
+void logDataPoint(uint16_t sv1, uint16_t pv1, uint16_t sv2, uint16_t pv2,
+                  uint16_t sv3, uint16_t pv3, uint16_t sv4, uint16_t pv4,
+                  int r1, int r2, int r3, int r4)
+{
+  // update at data_points_index, then increment it
+  data_points[data_points_index]  =
+  {
+    getTimeStamp(), // time stamp
+    sv1, pv1,       // Sv and Pv for accu 1
+    sv2, pv2,       // Sv and Pv for accu 2
+    sv3, pv3,       // Sv and Pv for accu 3
+    sv4, pv4,       // Sv and Pv for accu 4
+    (bool)r1, (bool)r2, (bool)r3, (bool)r4  // realay status
+  };
+
+  #ifdef DEBUG
+  Serial.println("logDataPoint added ts, 4 pair Sv, Pv, last 4 are relay status:");
+  Serial.print(data_points[data_points_index].ts); Serial.print(", ");
+  Serial.print(data_points[data_points_index].sv1); Serial.print(", ");
+  Serial.print(data_points[data_points_index].pv1); Serial.print(", ");
+  Serial.print(data_points[data_points_index].sv2); Serial.print(", ");
+  Serial.print(data_points[data_points_index].pv2); Serial.print(", ");
+  Serial.print(data_points[data_points_index].sv3); Serial.print(", ");
+  Serial.print(data_points[data_points_index].pv3); Serial.print(", ");
+  Serial.print(data_points[data_points_index].sv4); Serial.print(", ");
+  Serial.print(data_points[data_points_index].pv4); Serial.print(", ");
+  Serial.print(data_points[data_points_index].r1); Serial.print(", ");
+  Serial.print(data_points[data_points_index].r2); Serial.print(", ");
+  Serial.print(data_points[data_points_index].r3); Serial.print(", ");
+  Serial.print(data_points[data_points_index].r4); Serial.println("");
+  #endif
+
+  data_points_index = (data_points_index + 1) % MAX_NUM_DATA_POINTS;
+}
+
+
+/*******************************************************************************
+*
+* read the RS232 connection, handle the input command
+*
+*******************************************************************************/
+void handleRS232Cmd(void)
+{
+  int16_t buff_len        = 0;
+  utac_cmd_t* p_utac_cmd  = 0;
+
+
+  // read cmd from RS232
+  memset(rx_buff, '\0', sizeof(rx_buff));  // MAX_CMD_BUFF_LENGTH + 1
+
+  buff_len = getCmdFromRS232(rx_buff);
+
+  if( (0 >= buff_len) )  // this is -1 or 0 return from getCmdFromRS232
+  {
+    #ifdef DEBUG
+    Serial.println("handleRS232Cmd no rs232 pkt received");
+    #endif
+
+    // no pkt received
+    return;
+  }
+
+
+  //
+  // for now, we're only handling the 8 byte long cmd from email transaction
+  //
+  p_utac_cmd  = (utac_cmd_t*)rx_buff; // cast into the buffer
+
+  if( (false == validUTACCmd(p_utac_cmd)) )
+  {
+    #ifdef DEBUG
+    Serial.print("handleRS232Cmd invalid UTAC cmd received, flush rs232");
+    #endif
+
+    flushRS232();
+  }
+
+  //
+  // handle the cmd
+  //
+  switch(p_utac_cmd->cmd)
+  {
+    case UTAC_SET_TEMP_CMD:
+    {
+      #ifdef DEBUG
+      Serial.print("handleRS232Cmd found UTAC_SET_TEMP_CMD: ");
+      Serial.println(p_utac_cmd->cmd);
+      #endif
+
+      //
+      // put the new value for the affected id in the set_values array
+      //  - if the input id is 0, update all the set_values with the new value
+      //
+      if( (0 == p_utac_cmd->addr) )
+      {
+        #ifdef DEBUG
+        Serial.print("handleRS232Cmd input id is 0, updating all Svs to :");
+        Serial.println(p_utac_cmd->val, 16);
+        #endif
+
+        for(int i = 0; i < 4; i++)
+          set_values[i] = p_utac_cmd->val;
+
+      } else
+      {
+        #ifdef DEBUG
+        Serial.print("handleRS232Cmd input id is "); Serial.print(p_utac_cmd->addr);
+        Serial.print(", updating it to :"); Serial.println(p_utac_cmd->val, 16);
+        #endif
+
+        set_values[p_utac_cmd->addr] = p_utac_cmd->val;
+      }
+
+      //
+      // put the stored set_values in place, then overwrite the affected id
+      // with the new value
+      //
+      for(int i = 0; i < 4; i++)
+      {
+        // update the 1st 16 bit array address - the Modbus library only uses
+        // the 0th array location of au16reg
+        ModbusSet[i].au16reg[0] = set_values[i];
+
+        #ifdef DEBUG
+        Serial.print("updated Sv for write for id: "); Serial.print(i);
+        Serial.print(" to: "); Serial.println(ModbusSet[i].au16reg[0], 16);
+        #endif
+      }
+
+      runWriteStateMachine();
+
+      break;
+    }
+
+    default:
+    {
+      #ifdef DEBUG
+      Serial.print("handleRS232Cmd unhandled cmd: ");
+      Serial.println(p_utac_cmd->cmd);
+      #endif
+      break;
+    }
+  }
+}
+
+
+/*******************************************************************************
+*
+*
+*
+*******************************************************************************/
+void initialize(void)
+{
+  //
+  // startup the RS_232 connection
+  //
+  rs232port->begin(RS232_SPEED);
+
+  //
+  // initialize the real time clock (RTC)
+  // set the time to Jan 1 2023 00:00:00 until we add the set RTC command
+  //
+  initializeRTC();
+
+  //
+  // initialize the data_points array
+  //
+  memset(data_points, '\0', sizeof(data_points));
+
+  //
+  // initialize the set_values array
+  //
+  memset(set_values, '\0', sizeof(set_values));
+  have_initial_sv = false;
+
+  //
+  // initialize last_data_point_log_time and log flag
+  //
+  last_data_point_log_time = millis();
+  log_data_point = false;
+
+  //
+  // create the get structures to get SV and PV
+  //
+  ModbusQuery[0].u8id = 1; // slave address
+  ModbusQuery[0].u8fct = 3; // function code (this one is registers read)
+  ModbusQuery[0].u16RegAdd = 0x1000; // start address in slave
+  ModbusQuery[0].u16CoilsNo = 2; // number of elements (coils or registers) to read
+  ModbusQuery[0].au16reg = ModbusSlaveRegisters; // pointer to a memory array
+
+  ModbusQuery[1].u8id = 2;
+  ModbusQuery[1].u8fct = 3;
+  ModbusQuery[1].u16RegAdd = 0x1000;
+  ModbusQuery[1].u16CoilsNo = 2;
+  ModbusQuery[1].au16reg = ModbusSlaveRegisters + 2;
+
+  ModbusQuery[2].u8id = 3;
+  ModbusQuery[2].u8fct = 3;
+  ModbusQuery[2].u16RegAdd = 0x1000;
+  ModbusQuery[2].u16CoilsNo = 2;
+  ModbusQuery[2].au16reg = ModbusSlaveRegisters + 4;
+
+  ModbusQuery[3].u8id = 4;
+  ModbusQuery[3].u8fct = 3;
+  ModbusQuery[3].u16RegAdd = 0x1000;
+  ModbusQuery[3].u16CoilsNo = 2;
+  ModbusQuery[3].au16reg = ModbusSlaveRegisters + 6;
+
+  //
+  // create the set structures
+  // 
+  ModbusSet[0].u8id = 1;
+  ModbusSet[0].u8fct = 6;
+  ModbusSet[0].u16RegAdd = 0x0000;
+  ModbusSet[0].u16CoilsNo = 2;
+  ModbusSet[0].au16reg = ModbusSlaveRegisters + 8;
+
+  ModbusSet[1].u8id = 2;
+  ModbusSet[1].u8fct = 6;
+  ModbusSet[1].u16RegAdd = 0x0000;
+  ModbusSet[1].u16CoilsNo = 2;
+  ModbusSet[1].au16reg = ModbusSlaveRegisters + 10;
+
+  ModbusSet[2].u8id = 3;
+  ModbusSet[2].u8fct = 6;
+  ModbusSet[2].u16RegAdd = 0x0000;
+  ModbusSet[2].u16CoilsNo = 2;
+  ModbusSet[2].au16reg = ModbusSlaveRegisters + 12;
+
+  ModbusSet[3].u8id = 4;
+  ModbusSet[3].u8fct = 6;
+  ModbusSet[3].u16RegAdd = 0x0000;
+  ModbusSet[3].u16CoilsNo = 2;
+  ModbusSet[3].au16reg = ModbusSlaveRegisters + 14;
+
+  ControllinoModbusMaster.begin( 19200 ); // baud-rate at 19200
+  ControllinoModbusMaster.setTimeOut( 5000 ); // roll over if no answer in 5000 ms
+
+  myState = TX_READ_WAIT_STATE;
+  currentQuery = 0;
+
+  pinMode(CONTROLLINO_R1, OUTPUT);
+  pinMode(CONTROLLINO_R2, OUTPUT);
+  pinMode(CONTROLLINO_R3, OUTPUT);
+  pinMode(CONTROLLINO_R4, OUTPUT);
+  pinMode(CONTROLLINO_D0, OUTPUT);
+  digitalWrite(CONTROLLINO_R1, LOW);
+  digitalWrite(CONTROLLINO_R2, LOW);
+  digitalWrite(CONTROLLINO_R3, LOW);
+  digitalWrite(CONTROLLINO_R4, LOW);
+
+  startMillis = millis();
 }
 
 
