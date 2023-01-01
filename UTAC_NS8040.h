@@ -45,8 +45,9 @@ uint16_t  set_values[4];
 bool      have_initial_sv = false;
 
 // This is an structe which contains a query fo a slave device
-modbus_t ModbusQuery[4];  // do the get SvPv command
-modbus_t ModbusSet[4];    // do the Sv command
+#define MAX_SLAVE_IDS   4
+modbus_t ModbusQuery[MAX_SLAVE_IDS];  // do the get SvPv command
+modbus_t ModbusSet[MAX_SLAVE_IDS];    // do the Sv command
 
 // SV_PV_DELTA is the absolute value (SV - PV) to be acheived to close the relay
 #define SV_PV_DELTA       30
@@ -66,13 +67,15 @@ typedef enum READ_STATES_e
   RX_READ_RESP_STATE  = 2
 } READ_STATES;
 
-READ_STATES myState; // machine state
 
-uint8_t currentQuery; // pointer to message query
+typedef enum WRITE_STATES_e
+{
+  TX_WRITE_WAIT_STATE  = 0,
+  TX_WRITE_REQ_STATE   = 1,
+  RX_WRITE_RESP_STATE  = 2
+} WRITE_STATES;
 
-unsigned long startMillis;
-unsigned long currentMillis;
-const unsigned long period = 100;
+const unsigned long read_period = 100;
 
 // enable handling of large commands
 #define MAX_CMD_BUFF_LENGTH   254
@@ -112,10 +115,11 @@ typedef struct utac_cmd_s
 
 // function declarations
 void runReadStateMachine(void);
-void runWriteStateMachine(void);
+bool runWriteStateMachine(int);
 void dumpCurrentSvPvHistoryAndRelays(void);
-int16_t getCmdFromRS232(uint8_t*, int32_t = UTAC_PKT_LENGHT,
+int16_t readCmdFromRS232(uint8_t*, int32_t = UTAC_PKT_LENGHT,
                         unsigned long = UTAC_PKT_READ_TMO);
+bool writeResponseToRS232(uint8_t*, uint16_t);
 uint16_t getCRC16(uint16_t CRC, uint8_t byte);
 uint16_t calcCRC16(uint8_t* pBuff, uint16_t length);
 uint16_t getTimeStamp(void);
