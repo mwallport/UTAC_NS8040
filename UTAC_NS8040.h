@@ -3,6 +3,7 @@
 #include <Controllino.h>
 #include "ModbusRtu.h"
 
+
 // This MACRO defines Modbus master address.
 // For any Modbus slave devices are reserved addresses in the range from 1 to 247.
 // Important note only address 0 is reserved for a Modbus master device!
@@ -54,10 +55,10 @@ modbus_t ModbusSet[MAX_SLAVE_IDS];    // do the Sv command
 
 // SV versus PV history - used to determine whether to open or close relays
 #define RELAY_HISTORY_DEPTH   3
-char relay1Array[RELAY_HISTORY_DEPTH] = {0, 0, 0};
-char relay2Array[RELAY_HISTORY_DEPTH] = {0, 0, 0};
-char relay3Array[RELAY_HISTORY_DEPTH] = {0, 0, 0};
-char relay4Array[RELAY_HISTORY_DEPTH] = {0, 0, 0};
+int relay1Array[RELAY_HISTORY_DEPTH] = {0, 0, 0};
+int relay2Array[RELAY_HISTORY_DEPTH] = {0, 0, 0};
+int relay3Array[RELAY_HISTORY_DEPTH] = {0, 0, 0};
+int relay4Array[RELAY_HISTORY_DEPTH] = {0, 0, 0};
 
 
 typedef enum READ_STATES_e
@@ -94,13 +95,13 @@ uint8_t rx_buff[MAX_CMD_BUFF_LENGTH + 1];
 uint8_t tx_buff[MAX_RSP_BUF_LENGTH + 1];
 
 // RS_232C serial port
-HardwareSerial* rs232port = &Serial1;
+HardwareSerial* rs232port = &Serial2;
 
 // RS_232C speed
 #define RS232_SPEED   9600
 
 // set temperature cmd from UTAC
-#define UTAC_SET_TEMP_CMD  0x012C
+const uint16_t UTAC_SET_TEMP_CMD = 0x012C;
 
 // struct to hold the cmd contents
 typedef struct utac_cmd_s
@@ -199,3 +200,12 @@ data_point_t  data_points[MAX_NUM_DATA_POINTS]; // too many , too little ?
 int data_points_index = 0;   // log will wrap, need to keep track of last entry
 bool  log_data_point  = false;  // true if should log a data point
 static unsigned long long last_data_point_log_time = (DATA_POINT_LOG_PERIOD * 1000);
+
+
+#define htons(x) ( ((x)<< 8 & 0xFF00) | ((x)>> 8 & 0x00FF) )
+#define ntohs(x) htons(x)
+#define htonl(x) ( ((x)<<24 & 0xFF000000UL) | \
+                    ((x)<< 8 & 0x00FF0000UL) | \
+                    ((x)>> 8 & 0x0000FF00UL) | \
+                    ((x)>>24 & 0x000000FFUL) )
+#define ntohl(x) htonl(x)

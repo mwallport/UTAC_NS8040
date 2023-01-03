@@ -994,6 +994,17 @@ void Modbus::sendTxBuffer()
         //digitalWrite( u8txenpin, HIGH );
     }
 
+#define DEBUG
+
+  #ifdef DEBUG
+  Serial.print("Modbus::sendTxBuffer writing pkt:");
+  for(int i = 0; i < u8BufferSize; i++)
+  {
+    Serial.print(" "); Serial.print(au8Buffer[i], 16);
+  }
+  Serial.println("");
+  #endif
+
     // transfer buffer to serial line
     if (u8serno < 4)
         port->write( au8Buffer, u8BufferSize );
