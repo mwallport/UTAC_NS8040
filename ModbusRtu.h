@@ -994,7 +994,7 @@ void Modbus::sendTxBuffer()
         //digitalWrite( u8txenpin, HIGH );
     }
 
-#define DEBUG
+//#define DEBUG
 
   #ifdef DEBUG
   Serial.print("Modbus::sendTxBuffer writing pkt:");

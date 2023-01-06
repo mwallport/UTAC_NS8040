@@ -95,7 +95,7 @@ uint8_t rx_buff[MAX_CMD_BUFF_LENGTH + 1];
 uint8_t tx_buff[MAX_RSP_BUF_LENGTH + 1];
 
 // RS_232C serial port
-HardwareSerial* rs232port = &Serial2;
+HardwareSerial* rs232port = &Serial1;
 
 // RS_232C speed
 #define RS232_SPEED   9600
