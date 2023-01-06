@@ -1,6 +1,6 @@
 #include "UTAC_NS8040.h"
 
-#define DEBUG
+//#define DEBUG
 
 
 /*******************************************************************************
@@ -119,48 +119,30 @@ void runReadStateMachine(void)
 
             done = true;
 
-            /* this erases history  -- BUT IS HOW IT USED TO BE -- put this back maybe
-            for (i = 0; i < 2; i++)
+            /* this erases history  -- BUT IS HOW IT USED TO BE -- put this back maybe */
+            for (int i = 0; i < 2; i++)
             {
               relay1Array[i + 1] = relay1Array[i];
               relay2Array[i + 1] = relay2Array[i];
               relay3Array[i + 1] = relay3Array[i];
               relay4Array[i + 1] = relay4Array[i];
             }
-            */
-  
-            //
-            // following will overwrite the last history at [2] with [1] then pull
-            // [1] to [2], the [0] to [1], then below we update [0]
-            //
-            for (int i = RELAY_HISTORY_DEPTH - 1; i > 0; i--)
-            {
-              relay1Array[i] = relay1Array[i - 1];
-              relay2Array[i] = relay2Array[i - 1];
-              relay3Array[i] = relay3Array[i - 1];
-              relay4Array[i] = relay4Array[i - 1];
-
-              #ifdef DEBUG
-              Serial.println("updated the relayArrays");
-              #endif
-            }
-    
-            if (abs(ModbusSlaveRegisters[0] - ModbusSlaveRegisters[1]) <= SV_PV_DELTA)
+            if (abs((int16_t)(ModbusSlaveRegisters[0] - ModbusSlaveRegisters[1])) <= SV_PV_DELTA)
               relay1Array[0] = 1;
             else
               relay1Array[0] = 0;
       
-            if (abs(ModbusSlaveRegisters[2] - ModbusSlaveRegisters[3]) <= SV_PV_DELTA)
+            if (abs((int16_t)(ModbusSlaveRegisters[2] - ModbusSlaveRegisters[3])) <= SV_PV_DELTA)
               relay2Array[0] = 1;
             else
               relay2Array[0] = 0;
-      
-            if (abs(ModbusSlaveRegisters[4] - ModbusSlaveRegisters[5]) <= SV_PV_DELTA)
+
+            if (abs((int16_t)(ModbusSlaveRegisters[4] - ModbusSlaveRegisters[5])) <= SV_PV_DELTA)
               relay3Array[0] = 1;
             else
               relay3Array[0] = 0;
       
-            if (abs(ModbusSlaveRegisters[6] - ModbusSlaveRegisters[7]) <= SV_PV_DELTA)
+            if (abs((int16_t)(ModbusSlaveRegisters[6] - ModbusSlaveRegisters[7])) <= SV_PV_DELTA)
               relay4Array[0] = 1;
             else
               relay4Array[0] = 0;
@@ -170,22 +152,22 @@ void runReadStateMachine(void)
             //
             if (relay1Array[0] == 1 && relay1Array[1] == 1 && relay1Array[2] == 1) 
               digitalWrite(CONTROLLINO_R1, HIGH);
-            else
+            else if (relay1Array[0] == 0 && relay1Array[1] == 0 && relay1Array[2] == 0)
               digitalWrite(CONTROLLINO_R1, LOW);
     
             if (relay2Array[0] == 1 && relay2Array[1] == 1 && relay2Array[2] == 1)
               digitalWrite(CONTROLLINO_R2, HIGH);
-            else
+            else if (relay2Array[0] == 0 && relay2Array[1] == 0 && relay2Array[2] == 0)
               digitalWrite(CONTROLLINO_R2, LOW);
     
             if (relay3Array[0] == 1 && relay3Array[1] == 1 && relay3Array[2] == 1)
               digitalWrite(CONTROLLINO_R3, HIGH);
-            else
+            else if (relay3Array[0] == 0 && relay3Array[1] == 0 && relay3Array[2] == 0)
               digitalWrite(CONTROLLINO_R3, LOW);
     
             if (relay4Array[0] == 1 && relay4Array[1] == 1 && relay4Array[2] == 1)
               digitalWrite(CONTROLLINO_R4, HIGH);
-            else
+            else if (relay4Array[0] == 0 && relay4Array[1] == 0 && relay4Array[2] == 0)
               digitalWrite(CONTROLLINO_R4, LOW);
     
             #ifdef DEBUG

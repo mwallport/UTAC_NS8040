@@ -88,7 +88,7 @@ const unsigned long read_period = 100;
 #define UTAC_PKT_LENGHT       8
 
 // define the default time out for rs232 read
-#define UTAC_PKT_READ_TMO     2000
+#define UTAC_PKT_READ_TMO     500
 
 // RS_232C comm buffers - total of 255 bytes each - I like big buffers and I cannot lie
 uint8_t rx_buff[MAX_CMD_BUFF_LENGTH + 1];
