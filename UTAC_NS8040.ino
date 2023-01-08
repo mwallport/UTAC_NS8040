@@ -1,8 +1,10 @@
 #include "UTAC_NS8040.h"
 
-// UTAC_v1.02_230105
+// UTAC_v1.03_230107
+// - fixed the calcCRC to be htons on the send
+// - enabled DEBUG
 
-//#define DEBUG
+#define DEBUG
 
 
 /*******************************************************************************
@@ -662,6 +664,10 @@ void logDataPoint(uint16_t sv1, uint16_t pv1, uint16_t sv2, uint16_t pv2,
   #endif
 
   data_points_index = (data_points_index + 1) % MAX_NUM_DATA_POINTS;
+  
+  #ifdef DEBUG
+  Serial.print("data_points_index : "); Serial.println(data_points_index);
+  #endif
 }
 
 
@@ -714,7 +720,7 @@ void handleRS232Cmd(void)
     // reply with FF's replacing the cmd and val .. ?
     p_utac_cmd->cmd = 0xFFFF;
     p_utac_cmd->val = 0xFFFF;
-    p_utac_cmd->crc = calcCRC16((uint8_t*)(p_utac_cmd), sizeof(utac_cmd_t) - 2);
+    p_utac_cmd->crc = htons(calcCRC16((uint8_t*)(p_utac_cmd), sizeof(utac_cmd_t) - 2));
     
     // send back the pkt
     if( (false == writeResponseToRS232((uint8_t*)p_utac_cmd, sizeof(utac_cmd_t))) )
@@ -843,7 +849,7 @@ void handleRS232Cmd(void)
         // reply with FF's replacing the cmd and val .. ?
         p_utac_cmd->cmd = 0xFFFF;
         p_utac_cmd->val = 0xFFFF;
-        p_utac_cmd->crc = calcCRC16((uint8_t*)(p_utac_cmd), sizeof(utac_cmd_t) - 2);
+        p_utac_cmd->crc = htons(calcCRC16((uint8_t*)(p_utac_cmd), sizeof(utac_cmd_t) - 2));
 
       } else // else send back the original pkt - no need to recalculate the CRC16
       {
