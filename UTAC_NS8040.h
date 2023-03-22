@@ -2,7 +2,9 @@
 #include <HardwareSerial.h>
 #include <Controllino.h>
 #include "ModbusRtu.h"
+#include <Wire.h> //BS
 
+#define USE_I2C //BS I2C instead RS232
 
 // This MACRO defines Modbus master address.
 // For any Modbus slave devices are reserved addresses in the range from 1 to 247.
@@ -92,13 +94,19 @@ const unsigned long read_period = 100;
 
 // RS_232C comm buffers - total of 255 bytes each - I like big buffers and I cannot lie
 uint8_t rx_buff[MAX_CMD_BUFF_LENGTH + 1];
-uint8_t tx_buff[MAX_RSP_BUF_LENGTH + 1];
 
+#ifdef USE_I2C //BS
+//TwoWire* rs232port = &Wire;
+TwoWire* rs232port;
+
+#elif
 // RS_232C serial port
 HardwareSerial* rs232port = &Serial1;
+#endif
 
 // RS_232C speed
 #define RS232_SPEED   9600
+#define I2C_ADDR      4 //BS slave address 4
 
 // set temperature cmd from UTAC
 const uint16_t UTAC_SET_TEMP_CMD = 0x012C;
