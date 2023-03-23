@@ -4,10 +4,11 @@
 // - fixed the calcCRC to be htons on the send
 // - enabled DEBUG
 
-#define DEBUG
+//#define DEBUG
 #define DEBUG_I2C
 
-int32_t msgs_received = 0;
+volatile int32_t msgs_received = 0;
+volatile int32_t bad_msgs = 0;
 
 bool process_cmd_buff = false;
 
@@ -484,15 +485,36 @@ void flushRS232(void)
 {
   uint8_t junk;
 
-/* NOT YET
   while( (0 != rs232port->available()) )
   {
     junk = rs232port->read();
   }
-
-*/
 }
 
+
+/*******************************************************************************
+*
+* remove all bytes from the Rx buffer
+*
+* called when the last packet read from the buffer was junk, this will remove
+* the rest of the junk
+*
+*******************************************************************************/
+void flushWire(void)
+{
+  uint8_t junk;
+  int     count = 0;
+
+  while( (0 != Wire.available()) )
+  {
+    junk = Wire.read();
+    count++;
+  }
+
+  Serial.print("flushWire() removed: "); Serial.print(count); Serial.println(" bytes");
+  Serial.print("restarting Wire");
+  restart_wire();
+}
 
 /*******************************************************************************
 *
@@ -518,6 +540,8 @@ bool validUTACCmd(utac_cmd_t* cmd)
     Serial.print("validUTACCmd invalid crc :"); Serial.print(cmd->crc, 16);
     Serial.print(" expected: "); Serial.println(calc_crc, 16);
     #endif
+
+    bad_msgs +=1;
     return(false);
 
   } else
@@ -743,11 +767,22 @@ void handleRS232Cmd(void)
 
   if( (false == validUTACCmd(p_utac_cmd)) )
   {
+
+
+    #ifndef USE_I2C
     #ifdef DEBUG
     Serial.print("handleRS232Cmd invalid UTAC cmd received, flush rs232");
     #endif
-
+    
     flushRS232();
+    #else
+    #ifdef DEBUG
+    Serial.print("\n\n\nhandleRS232Cmd invalid UTAC cmd received, flush Wire\n\n");
+    #endif
+    
+    flushWire();
+    p_utac_cmd->addr = 0xff;
+    #endif
     
     #ifdef DEBUG
     Serial.println("sending back modified pkt to have 0xffff for cmd and val to indicate fail");
@@ -939,7 +974,7 @@ void initialize(void)
   // startup the RS_232 connection
   //
 #ifdef USE_I2C //BS
-  #ifdef DEBUG_I2C
+  #ifdef DEBUG
   Serial.println("USE_I2C is defined...");
   #endif
   
@@ -1181,6 +1216,11 @@ void receiveEvent(int howMany)
   Serial.println(" ");
   Serial.println("receiveEvent done");
 
+  #ifdef DEBUG_I2C
+  Serial.print("msgs_received: "); Serial.println(msgs_received);
+  Serial.print("bad_msgs: "); Serial.println(bad_msgs);
+  #endif
+
   process_cmd_buff  = true;
 }
 
@@ -1193,7 +1233,15 @@ void requestEvent() {
   Serial.println("\trequestEvent done");
 }
 
-
+void restart_wire()
+{
+  Wire.end();
+  delay(5000);
+  Wire.begin(I2C_ADDR);
+  Wire.setClock(100000);
+  Wire.onReceive(receiveEvent); //register event
+  Wire.onRequest(requestEvent);
+}
 
 /* End of the example. Visit us at https://controllino.biz/ or contact us at info@controllino.biz if you have any questions or troubles. */
 

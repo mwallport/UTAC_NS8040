@@ -25,7 +25,7 @@ QueueHandle_t c2h4_structQueue;   // ACK back to host port 4
 
 #define MAX_CMD_BUFF_LENGTH   64
 
-// #define x4_SERIAL - uncomment when serial console not needed; switches to include Serial
+#define x4_SERIAL //- uncomment when serial console not needed; switches to include Serial
 
 void setup() {
 
@@ -48,29 +48,13 @@ void setup() {
   c2h4_structQueue = xQueueCreate(2, // Queue length
                               sizeof(struct utac_cmd_s) // Queue item size
                               );
-/*
-  c2h1_structQueue = xQueueCreate(2, // Queue length
-                              sizeof(uint8_t) // Queue item size
-                              );
-  
-  c2h2_structQueue = xQueueCreate(2, // Queue length
-                              sizeof(uint8_t) // Queue item size
-                              );
-  
-  c2h3_structQueue = xQueueCreate(2, // Queue length
-                              sizeof(uint8_t) // Queue item size
-                              );
-  
-  c2h4_structQueue = xQueueCreate(2, // Queue length
-                              sizeof(uint8_t) // Queue item size
-                              );
-*/ 
-  if (h2c_structQueue != NULL && \
+
+  if(h2c_structQueue != NULL && \
     c2h1_structQueue != NULL && \
     c2h2_structQueue != NULL && \
     c2h3_structQueue != NULL && \
-    c2h4_structQueue != NULL) {
-    
+    c2h4_structQueue != NULL)
+  {
     // Create task that consumes the queue if it was created.
     xTaskCreate(TaskH2CTx, // Task function
                 "H2CTx", // A name just for humans
@@ -80,7 +64,8 @@ void setup() {
                 NULL);
 
     // Create task that consumes the queue if it was created.
-/* MA
+    
+/* MA - don't need this task - needed to move the requestFrom into the cth task
     xTaskCreate(TaskC2HRx, // Task function
                 "C2HRx", // A name just for humans
                 128,  // This stack size can be checked & adjusted by reading the Stack Highwater
@@ -105,7 +90,8 @@ void setup() {
                 NULL, 
                 1, // Priority
                 NULL);
-                
+#else
+Serial.begin(115200);                
 #endif
     // Create task that publish data in the queue if it was created.
     xTaskCreate(TaskH2CRx2, // Task function
@@ -187,18 +173,35 @@ void TaskH2CRx1(void *pvParameters)
     uint32_t bytesRead = 0;
     uint8_t buff[MAX_CMD_BUFF_LENGTH + 1];
 
+
+    memset(buff, '\0', MAX_CMD_BUFF_LENGTH + 1);
+    
     if (Serial.available() >= sizeof(utac_cmd_s)) { //wait until FIFO holds a whole command
       for (bytesRead = 0; bytesRead < sizeof(utac_cmd_s); bytesRead++)  {
         buff[bytesRead] = Serial.read();
       }
 
+      //Serial.print("H2CRx1 got pkt: ");
+      for(int i = 0; i < 8; i++)
+      {
+        //Serial.print("0x"); //Serial.print(buff[i], 16); //Serial.print(" ");
+      }
+      //Serial.println("");
+    
       currentCmd = (utac_cmd_s*)buff;
       
-      xQueueSend(h2c_structQueue, currentCmd, portMAX_DELAY);  //push command struct onto queue
+      if( (errQUEUE_FULL == xQueueSend(h2c_structQueue, currentCmd, 0)) )
+      {
+        // flush - shed traffic
+        while( (Serial.available()) )
+        {
+          uint8_t b = Serial.read();
+        }
+      }
     }
 
     // One tick delay (15ms) in between reads for stability
-    TODO: longer delay may be desireable.  Investigate.
+    // TODO: longer delay may be desireable.  Investigate.
     vTaskDelay(1);
   }
 }
@@ -213,11 +216,9 @@ void TaskC2HTx1(void * pvParameters) {
 
   for (;;) 
   {
-//    uint8_t val;
     memset(buff, '\0', MAX_CMD_BUFF_LENGTH + 1);
 
-//    if (xQueueReceive(c2h1_structQueue, &val, portMAX_DELAY) == pdPASS) {
-    if (xQueueReceive(c2h1_structQueue, utac_cmd_s*)buff, portMAX_DELAY) == pdPASS) {
+    if (xQueueReceive(c2h1_structQueue, (utac_cmd_s*)buff, portMAX_DELAY) == pdPASS) {
       Serial.write(buff, 8);      
     }
   }
@@ -237,14 +238,30 @@ void TaskH2CRx2(void *pvParameters)
     uint32_t bytesRead = 0;
     uint8_t buff[MAX_CMD_BUFF_LENGTH + 1];
 
+    memset(buff, '\0', MAX_CMD_BUFF_LENGTH + 1);
+    
     if (Serial1.available() >= sizeof(utac_cmd_s)) {
       for (bytesRead = 0; bytesRead < sizeof(utac_cmd_s); bytesRead++)  {
         buff[bytesRead] = Serial1.read();
       }
 
-      currentCmd = (utac_cmd_s*)buff;
+      //Serial.print("H2CRx2 got pkt: ");
+      for(int i = 0; i < 8; i++)
+      {
+        //Serial.print("0x"); //Serial.print(buff[i], 16); //Serial.print(" ");
+      }
+      //Serial.println("");
+
+          currentCmd = (utac_cmd_s*)buff;
       
-      xQueueSend(h2c_structQueue, currentCmd, portMAX_DELAY);
+      if( (errQUEUE_FULL == xQueueSend(h2c_structQueue, currentCmd, 0)) )
+      {
+        // flush - shed traffic
+        while( (Serial.available()) )
+        {
+          uint8_t b = Serial.read();
+        }
+      }
     }
 
     // One tick delay (15ms) in between reads for stability
@@ -259,12 +276,10 @@ void TaskC2HTx2(void * pvParameters) {
 
   for (;;) 
   {
-//    uint8_t val;
     memset(buff, '\0', MAX_CMD_BUFF_LENGTH + 1);
 
-//    if (xQueueReceive(c2h2_structQueue, &val, portMAX_DELAY) == pdPASS) {
     if (xQueueReceive(c2h2_structQueue, (utac_cmd_s*)buff, portMAX_DELAY) == pdPASS) {
-      Serial.write(buff, 8);      
+      Serial1.write(buff, 8);      
     }
   }
 }
@@ -282,14 +297,30 @@ void TaskH2CRx3(void *pvParameters)
     uint32_t bytesRead = 0;
     uint8_t buff[MAX_CMD_BUFF_LENGTH + 1];
 
+    memset(buff, '\0', MAX_CMD_BUFF_LENGTH + 1);
+    
     if (Serial2.available() >= sizeof(utac_cmd_s)) {
       for (bytesRead = 0; bytesRead < sizeof(utac_cmd_s); bytesRead++)  {
         buff[bytesRead] = Serial2.read();
       }
 
+      //Serial.print("H2CRx3 got pkt: ");
+      for(int i = 0; i < 8; i++)
+      {
+        //Serial.print("0x"); //Serial.print(buff[i], 16); //Serial.print(" ");
+      }
+      //Serial.println("");
+
       currentCmd = (utac_cmd_s*)buff;
       
-      xQueueSend(h2c_structQueue, currentCmd, portMAX_DELAY);
+      if( (errQUEUE_FULL == xQueueSend(h2c_structQueue, currentCmd, 0)) )
+      {
+        // flush - shed traffic
+        while( (Serial.available()) )
+        {
+          uint8_t b = Serial.read();
+        }
+      }
     }
 
     // One tick delay (15ms) in between reads for stability
@@ -304,12 +335,10 @@ void TaskC2HTx3(void * pvParameters) {
 
   for (;;) 
   {
-//    uint8_t val;
     memset(buff, '\0', MAX_CMD_BUFF_LENGTH + 1);
 
-//    if (xQueueReceive(c2h3_structQueue, &val, portMAX_DELAY) == pdPASS) {
     if (xQueueReceive(c2h3_structQueue, (utac_cmd_s*)buff, portMAX_DELAY) == pdPASS) {
-      Serial.write(buff, 8);      
+      Serial2.write(buff, 8);      
     }
   }
 }
@@ -318,7 +347,6 @@ void TaskH2CRx4(void *pvParameters)
 {
   (void) pvParameters;
 
-    // Init Arduino serial
   Serial3.begin(9600);
 
   for (;;)
@@ -327,14 +355,30 @@ void TaskH2CRx4(void *pvParameters)
     uint32_t bytesRead = 0;
     uint8_t buff[MAX_CMD_BUFF_LENGTH + 1];
 
+    memset(buff, '\0', MAX_CMD_BUFF_LENGTH + 1);
+    
     if (Serial3.available() >= sizeof(utac_cmd_s)) {
       for (bytesRead = 0; bytesRead < sizeof(utac_cmd_s); bytesRead++)  {
         buff[bytesRead] = Serial3.read();
       }
 
+      //Serial.print("H2CRx4 got pkt: ");
+      for(int i = 0; i < 8; i++)
+      {
+        //Serial.print("0x"); //Serial.print(buff[i], 16); //Serial.print(" ");
+      }
+      //Serial.println("");
+
       currentCmd = (utac_cmd_s*)buff;
       
-      xQueueSend(h2c_structQueue, currentCmd, portMAX_DELAY);
+      if( (errQUEUE_FULL == xQueueSend(h2c_structQueue, currentCmd, 0)) )
+      {
+        // flush - shed traffic
+        while( (Serial.available()) )
+        {
+          uint8_t b = Serial.read();
+        }
+      }
     }
 
     // One tick delay (15ms) in between reads for stability
@@ -349,12 +393,10 @@ void TaskC2HTx4(void * pvParameters) {
 
   for (;;) 
   {
-//    uint8_t val;
     memset(buff, '\0', MAX_CMD_BUFF_LENGTH + 1);
 
-//    if (xQueueReceive(c2h4_structQueue, &val, portMAX_DELAY) == pdPASS) {
     if (xQueueReceive(c2h4_structQueue, (utac_cmd_s*)buff, portMAX_DELAY) == pdPASS) {
-      Serial.write(buff, 8);      
+      Serial3.write(buff, 8);      
     }
   }
 }
@@ -365,6 +407,10 @@ void TaskC2HTx4(void * pvParameters) {
  */
 void TaskH2CTx(void * pvParameters) {
   (void) pvParameters;
+
+  struct utac_cmd_s* currentCmd;
+  uint32_t bytesSent, count;
+  uint8_t buff[MAX_CMD_BUFF_LENGTH + 1];
   int bytes_written;
   int bytes_requested;
   int ret_val;
@@ -378,27 +424,27 @@ void TaskH2CTx(void * pvParameters) {
   Wire.begin(); // join i2c bus (address optional for master)
   Wire.setClock(100000);
 
-  Serial.begin(115200);
-
   for (;;) 
   {
-    struct utac_cmd_s* currentCmd;
-    uint32_t bytesSent, count;
-    uint8_t buff[MAX_CMD_BUFF_LENGTH + 1];
-
     memset(buff, '\0', MAX_CMD_BUFF_LENGTH + 1);
 
     if (xQueueReceive(h2c_structQueue, (utac_cmd_s*)buff, portMAX_DELAY) == pdPASS)
     {
-      Serial.println("total_msg_send_attempts: "); Serial.println(total_msg_send_attempts);
-      Serial.println("msg_send_fail_count: "); Serial.println(msg_send_fail_count);
+      //Serial.println("total_msg_send_attempts: "); //Serial.println(total_msg_send_attempts);
+      //Serial.println("msg_send_fail_count: "); //Serial.println(msg_send_fail_count);
       
       // send the packet
-      Serial.println("controller sending pkt data");
+      //Serial.print("controller sending pkt data: ");
+      for(int i = 0; i < 8; i++)
+      {
+        //Serial.print("0x"); //Serial.print(buff[i], 16); //Serial.print(" ");
+      }
+      //Serial.println(" ");
+      
       Wire.beginTransmission(4);
       bytes_written = 0;
       bytes_written = Wire.write(buff, 8);
-      Serial.print("controller sent bytes_written: "); Serial.println(bytes_written);
+      //Serial.print("controller sent bytes_written: "); //Serial.println(bytes_written);
     
       ret_val = 0;
       ret_val = Wire.endTransmission();
@@ -409,28 +455,27 @@ void TaskH2CTx(void * pvParameters) {
       switch(ret_val)
       {
         case 0: 
-          Serial.println("\tendTransmission SCCEESS 0, requesting ACK ...");
+          //Serial.println("\tendTransmission SCCEESS 0, requesting ACK ...");
 
           /* need to wait for the time-out period on the Controllino for it
            *  to handle the packet in the worst case scenario
            * 
            * Time out on Controllino is 2 seconds
            */
-          Serial.println("controller sleeping 2 seconds...");
+          //Serial.println("controller sleeping 2 seconds...");
           count_down = 8;
           while(count_down--)
             delay(250);
-          Serial.println("controller done sleeping 2 seconds, requesting ack...");
+          //Serial.println("controller done sleeping 2 seconds, requesting ack...");
           
           bytes_requested = 0;
-//          bytes_requested = Wire.requestFrom(4, 1);    // request 8 byte ACK from peripheral device #4
           bytes_requested = Wire.requestFrom(4, 8);    // request 8 byte ACK from peripheral device #4
-          Serial.print("\tbytes_requested: "); Serial.println(bytes_requested);
+          //Serial.print("\tbytes_requested: "); //Serial.println(bytes_requested);
 
           // max 0.5 seconds waiting for byte to come back
           // if byte not come back . .. restart the Wire ?? ? 
-          Serial.println("controller waiting for 0.5 seconds for response...");
-          count_down = 2;
+          //Serial.println("controller waiting for 1 seconds for response...");
+          count_down = 4;
           while(count_down--)
           {
             if( (0 < Wire.available()) )
@@ -438,74 +483,67 @@ void TaskH2CTx(void * pvParameters) {
 
             delay(250); // yeah .. the delay on the Due is dodgy lower than 250
           }
-          Serial.println("controller done waiting for 0.5 seconds for response...");
-
-//          byte_read = Wire.read();
-//          Serial.print("\tread ack byte: "); Serial.println(byte_read);
+          //Serial.println("controller done waiting for 1 seconds for response...");
 
           memset(buff, '\0', MAX_CMD_BUFF_LENGTH + 1);
-          Serial.print("\tread ack bytes: ");
-          for(int i = 0; (i < MAX_CMD_BUFF_LENGTH) && Wire.available(); i++)
+          //Serial.print("\tread ack bytes: ");
+          for(int i = 0; (i < 8) && Wire.available(); i++)
           {
             buff[i] = Wire.read();
-            Serial.print("0x"); Serial.print(buff[i], 16); Serial.print(" ");
+            //Serial.print("0x"); //Serial.print(buff[i], 16); //Serial.print(" ");
           }
-          Serial.println(" ");
+          //Serial.println(" ");
           
  
           currentCmd = (utac_cmd_s*)buff;
           switch(buff[0])
-//          switch(byte_read)
           {
             case 1 :
-              //xQueueSend(c2h1_structQueue, &byte_read, portMAX_DELAY);
               xQueueSend(c2h1_structQueue, currentCmd, portMAX_DELAY);
               break;
             case 2 :
-              //xQueueSend(c2h2_structQueue, &byte_read, portMAX_DELAY);
               xQueueSend(c2h2_structQueue, currentCmd, portMAX_DELAY);
               break;
             case 3 :
-              //xQueueSend(c2h3_structQueue, &byte_read, portMAX_DELAY);
               xQueueSend(c2h3_structQueue, currentCmd, portMAX_DELAY);
               break;
             case 4 :
-              //xQueueSend(c2h4_structQueue, &byte_read, portMAX_DELAY);
               xQueueSend(c2h4_structQueue, currentCmd, portMAX_DELAY);
               break;
             default :
               // restart Wire here ??
+              restart_wire = true;
               break;
           }
 
           break;
     
         case 1:
-          Serial.println("\tendTransmission FAIL 1 - data too long to fit in Tx buff");
+          //Serial.println("\tendTransmission FAIL 1 - data too long to fit in Tx buff");
           break;
     
         case 2:
-          Serial.println("\tendTransmission FAIL 2 - received NACK on transmit of address");
+          ////Serial.println("\tendTransmission FAIL 2 - received NACK on transmit of address");
           restart_wire = true;
           break;
     
         case 3:
-          Serial.println("\tendTransmission FAIL 3 - received NACK on transmit of data");
+          //Serial.println("\tendTransmission FAIL 3 - received NACK on transmit of data");
           restart_wire = true;
           break;
     
         case 4:
-          Serial.println("\tendTransmission FAIL 4 - other error");
+          //Serial.println("\tendTransmission FAIL 4 - other error");
           restart_wire = true;
           break;
     
         case 5:
-          Serial.println("\tendTransmission FAIL 5 - timeout");
+          //Serial.println("\tendTransmission FAIL 5 - timeout");
           restart_wire = true;
           break;
     
         default:
-          Serial.print("\tendTransmission FAIL default, got: "); Serial.println(ret_val);
+          //Serial.print("\tendTransmission FAIL default, got: "); //Serial.println(ret_val);
           restart_wire = true;
           break;
       }
@@ -522,19 +560,10 @@ void TaskH2CTx(void * pvParameters) {
 
 void restart_wire_comm()
 {
-  Serial.begin(115200);   //begin serial for debug
-  delay(5000);
-  
-  #ifdef WIRE_HAS_END
-  Serial.println("calling Wire.end()");
   Wire.end();
-  #else
-  Serial.println("Wire.end() not available");
-  #endif
-  delay(2000);
-  Wire.begin();
   delay(5000);
-  Serial.println("restart_wire_comm()");
+  Wire.begin();
+  Wire.setClock(100000);
 }
 
 
@@ -564,7 +593,7 @@ void TaskC2HRx(void * pvParameters) {
           xQueueSend(c2h4_structQueue, &c, portMAX_DELAY);
           break;
       }
-      Serial.println(c);         // print the character
+      //Serial.println(c);         // print the character
     }
     vTaskDelay(1);
   }
