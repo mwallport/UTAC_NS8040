@@ -91,7 +91,7 @@ void setup() {
                 1, // Priority
                 NULL);
 #else
-Serial.begin(115200);                
+//Serial.begin(115200);                
 #endif
     // Create task that publish data in the queue if it was created.
     xTaskCreate(TaskH2CRx2, // Task function
@@ -239,6 +239,8 @@ void TaskH2CRx2(void *pvParameters)
     uint8_t buff[MAX_CMD_BUFF_LENGTH + 1];
 
     memset(buff, '\0', MAX_CMD_BUFF_LENGTH + 1);
+
+    //Serial.println("H2CRx2 reading Serial1");
     
     if (Serial1.available() >= sizeof(utac_cmd_s)) {
       for (bytesRead = 0; bytesRead < sizeof(utac_cmd_s); bytesRead++)  {
@@ -257,9 +259,9 @@ void TaskH2CRx2(void *pvParameters)
       if( (errQUEUE_FULL == xQueueSend(h2c_structQueue, currentCmd, 0)) )
       {
         // flush - shed traffic
-        while( (Serial.available()) )
+        while( (Serial1.available()) )
         {
-          uint8_t b = Serial.read();
+          uint8_t b = Serial1.read();
         }
       }
     }
@@ -298,6 +300,8 @@ void TaskH2CRx3(void *pvParameters)
     uint8_t buff[MAX_CMD_BUFF_LENGTH + 1];
 
     memset(buff, '\0', MAX_CMD_BUFF_LENGTH + 1);
+
+    //Serial.println("H2CRx3 reading Serial2");
     
     if (Serial2.available() >= sizeof(utac_cmd_s)) {
       for (bytesRead = 0; bytesRead < sizeof(utac_cmd_s); bytesRead++)  {
@@ -316,9 +320,9 @@ void TaskH2CRx3(void *pvParameters)
       if( (errQUEUE_FULL == xQueueSend(h2c_structQueue, currentCmd, 0)) )
       {
         // flush - shed traffic
-        while( (Serial.available()) )
+        while( (Serial2.available()) )
         {
-          uint8_t b = Serial.read();
+          uint8_t b = Serial2.read();
         }
       }
     }
@@ -356,7 +360,9 @@ void TaskH2CRx4(void *pvParameters)
     uint8_t buff[MAX_CMD_BUFF_LENGTH + 1];
 
     memset(buff, '\0', MAX_CMD_BUFF_LENGTH + 1);
-    
+
+    //Serial.println("H2CRx4 reading Serial3");
+
     if (Serial3.available() >= sizeof(utac_cmd_s)) {
       for (bytesRead = 0; bytesRead < sizeof(utac_cmd_s); bytesRead++)  {
         buff[bytesRead] = Serial3.read();
@@ -374,9 +380,9 @@ void TaskH2CRx4(void *pvParameters)
       if( (errQUEUE_FULL == xQueueSend(h2c_structQueue, currentCmd, 0)) )
       {
         // flush - shed traffic
-        while( (Serial.available()) )
+        while( (Serial3.available()) )
         {
-          uint8_t b = Serial.read();
+          uint8_t b = Serial3.read();
         }
       }
     }
@@ -573,7 +579,7 @@ void restart_wire_comm()
 void TaskC2HRx(void * pvParameters) {
   (void) pvParameters;
 
-  Serial.begin(9600);
+  //Serial.begin(9600);
 
   for(;;)
   {	

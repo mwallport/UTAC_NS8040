@@ -4,7 +4,7 @@
 // - fixed the calcCRC to be htons on the send
 // - enabled DEBUG
 
-//#define DEBUG
+#define DEBUG
 #define DEBUG_I2C
 
 volatile int32_t msgs_received = 0;
@@ -55,6 +55,8 @@ void loop()
     handleRS232Cmd();
   }
   #endif
+
+  delay(1000);
 }
 
 
@@ -74,14 +76,14 @@ void runReadStateMachine(void)
   
   if (millis() - readStateMachineStartMillis < read_period)
   {
-    #ifdef DEBUG_x
+    #ifdef DEBUG
     Serial.println("runReadStateMachine wait time not expired, returning");
     #endif
 
     return;
   }
 
-  #ifdef DEBUG_x
+  #ifdef DEBUG
   Serial.println("runReadStateMachine wait time expired, entering state machine");
   #endif
 
@@ -98,7 +100,7 @@ void runReadStateMachine(void)
     {
       case TX_READ_REQ_STATE:
       {
-        #ifdef DEBUG_x
+        #ifdef DEBUG
         Serial.print("runReadStateMachine sending Modbus query: ");
         Serial.println(currentQuery);
         #endif
@@ -118,7 +120,7 @@ void runReadStateMachine(void)
           last_error = 0;
           last_error = ControllinoModbusMaster.getLastError();
           
-          #ifdef DEBUG_x
+          #ifdef DEBUG
           Serial.print("runReadStateMachine completed Modbus query: ");
           Serial.print(currentQuery); Serial.print(", last_error: "); Serial.println(last_error);
           #endif
@@ -133,7 +135,7 @@ void runReadStateMachine(void)
           //
           if (currentQuery == MAX_SLAVE_IDS - 1)  // finished sending all Modbus queries..
           {
-            #ifdef DEBUG_x
+            #ifdef DEBUG
             Serial.println("runReadStateMachine completed all Modbus queries");
             #endif
 
@@ -190,7 +192,7 @@ void runReadStateMachine(void)
             else if (relay4Array[0] == 0 && relay4Array[1] == 0 && relay4Array[2] == 0)
               digitalWrite(CONTROLLINO_R4, LOW);
     
-            #ifdef DEBUG_x
+            #ifdef DEBUG
             dumpCurrentSvPvHistoryAndRelays();
             #endif
   
@@ -243,7 +245,7 @@ void dumpCurrentSvPvHistoryAndRelays(void)
 
 
   // registers read was proceed
-  #ifdef DEBUG_x
+  #ifdef DEBUG
   Serial.println("---------- READ RESPONSE RECEIVED ----");
 
   Serial.print("Slave ");
@@ -434,10 +436,6 @@ bool writeResponseToRS232(uint8_t* buff, uint16_t length)
   int bytes_written = 0;
 
 
-/* NOT YET */
-  return(retVal);
-
-
   #ifdef DEBUG
   Serial.print("writeResponseToRS232 writing pkt:");
   for(int i = 0; i < length; i++)
@@ -447,11 +445,9 @@ bool writeResponseToRS232(uint8_t* buff, uint16_t length)
   Serial.println("");
   #endif
   
-//  bytes_written = rs232port->write(buff, length);  MA only writing one byte currently
-  bytes_written = rs232port->write(buff, 1);
+  bytes_written = rs232port->write(buff, length);
 
-//  if( (bytes_written != length) )
-  if( (bytes_written != 1) )
+  if( (bytes_written != length) )
   {
     #ifdef DEBUG
     Serial.print("writeResponseToRS232 failed, wrote: "); Serial.print(bytes_written);
@@ -461,7 +457,7 @@ bool writeResponseToRS232(uint8_t* buff, uint16_t length)
     retVal  = false;
   } else
   {
-    #ifdef DEBUG_x
+    #ifdef DEBUG
     Serial.print("writeResponseToRS232 success, wrote: "); Serial.print(bytes_written);
     Serial.print(" bytes of requested "); Serial.println(length);
     #endif
@@ -669,7 +665,7 @@ uint16_t getTimeStamp(void)
     timestamp += (uint8_t)data[i];
   }
 
-  #ifdef DEBUG_x
+  #ifdef DEBUG
   Serial.print("getTimeStamp returning: "); Serial.println(timestamp);
   #endif
 
@@ -697,7 +693,7 @@ void logDataPoint(uint16_t sv1, uint16_t pv1, uint16_t sv2, uint16_t pv2,
     (bool)r1, (bool)r2, (bool)r3, (bool)r4  // realay status
   };
 
-  #ifdef DEBUG_x
+  #ifdef DEBUG
   Serial.println("logDataPoint added ts, 4 pair Sv, Pv, last 4 are relay status:");
   Serial.print(data_points[data_points_index].ts); Serial.print(", ");
   Serial.print(data_points[data_points_index].sv1); Serial.print(", ");
@@ -716,7 +712,7 @@ void logDataPoint(uint16_t sv1, uint16_t pv1, uint16_t sv2, uint16_t pv2,
 
   data_points_index = (data_points_index + 1) % MAX_NUM_DATA_POINTS;
   
-  #ifdef DEBUG_x
+  #ifdef DEBUG
   Serial.print("data_points_index : "); Serial.println(data_points_index);
   #endif
 }
@@ -859,7 +855,7 @@ void handleRS232Cmd(void)
         // the 0th array location of au16reg
         ModbusSet[i].au16reg[0] = set_values[i];
 
-        #ifdef DEBUG_x
+        #ifdef DEBUG
         Serial.print("updated Sv for write for zero-based id: "); Serial.print(i);
         Serial.print(" to: "); Serial.println(ModbusSet[i].au16reg[0], 16);
         #endif
@@ -988,7 +984,7 @@ void initialize(void)
   rs232port->onReceive(receiveEvent); //register event
   rs232port->onRequest(requestEvent);
 */
-#elif
+#else
   Serial.println("USE_I2C is NOT defined...");
 
   rs232port->begin(RS232_SPEED);
@@ -1111,7 +1107,7 @@ bool runWriteStateMachine(int currentQuery)
   uint8_t last_error  = 0;
 
 
-  #ifdef DEBUG_x
+  #ifdef DEBUG
   Serial.println("runWriteStateMachine entered, writting:");
   Serial.print("id: "); Serial.print(currentQuery); Serial.print(" Sv: ");
   Serial.println(ModbusSet[currentQuery].au16reg[0], 16);
@@ -1128,7 +1124,7 @@ bool runWriteStateMachine(int currentQuery)
       case TX_WRITE_REQ_STATE:
       {
 
-        #ifdef DEBUG_x
+        #ifdef DEBUG
         Serial.print("runWriteStateMachine sending Modbus query: ");
         Serial.println(currentQuery);
         #endif

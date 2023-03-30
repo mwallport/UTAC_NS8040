@@ -90,7 +90,7 @@ const unsigned long read_period = 100;
 #define UTAC_PKT_LENGHT       8
 
 // define the default time out for rs232 read
-#define UTAC_PKT_READ_TMO     500
+#define UTAC_PKT_READ_TMO     1000
 
 // RS_232C comm buffers - total of 255 bytes each - I like big buffers and I cannot lie
 uint8_t rx_buff[MAX_CMD_BUFF_LENGTH + 1];
@@ -99,7 +99,7 @@ uint8_t rx_buff[MAX_CMD_BUFF_LENGTH + 1];
 //TwoWire* rs232port = &Wire;
 TwoWire* rs232port;
 
-#elif
+#else
 // RS_232C serial port
 HardwareSerial* rs232port = &Serial1;
 #endif
