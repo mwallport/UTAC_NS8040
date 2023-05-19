@@ -4,7 +4,8 @@
 // - fixed the calcCRC to be htons on the send
 // - enabled DEBUG
 
-#define DEBUG
+#define DEBUG_TS
+//#define DEBUG
 #define DEBUG_I2C
 
 volatile int32_t msgs_received = 0;
@@ -55,6 +56,8 @@ void loop()
     handleRS232Cmd();
   }
   #endif
+
+  dumpTempData();
 
   delay(1000);
 }
@@ -651,10 +654,11 @@ void initializeRTC(void)
 #define NUM_RTC_PARAMS  7
 uint16_t getTimeStamp(void)
 {
-  uint32_t  timestamp = 0;
+  uint16_t  timestamp = 0;
   unsigned char data[NUM_RTC_PARAMS];
   
 
+/*
   // get the current time from the RTC
   Controllino_ReadTimeDate(&data[0], &data[1], &data[2], &data[3],
                           &data[4], &data[5], &data[6]);
@@ -664,12 +668,15 @@ uint16_t getTimeStamp(void)
   {
     timestamp += (uint8_t)data[i];
   }
+*/
+  timestamp = millis() / 1000;
 
-  #ifdef DEBUG
-  Serial.print("getTimeStamp returning: "); Serial.println(timestamp);
+  
+  #ifdef DEBUG_TS
+  Serial.print("getTimeStamp returning: "); Serial.println((uint16_t)timestamp);
   #endif
 
-  return(timestamp);
+  return((uint16_t)timestamp);
 }
 
 
@@ -693,7 +700,7 @@ void logDataPoint(uint16_t sv1, uint16_t pv1, uint16_t sv2, uint16_t pv2,
     (bool)r1, (bool)r2, (bool)r3, (bool)r4  // realay status
   };
 
-  #ifdef DEBUG
+  #ifdef DEBUG_TS
   Serial.println("logDataPoint added ts, 4 pair Sv, Pv, last 4 are relay status:");
   Serial.print(data_points[data_points_index].ts); Serial.print(", ");
   Serial.print(data_points[data_points_index].sv1); Serial.print(", ");
@@ -1088,6 +1095,9 @@ void initialize(void)
   digitalWrite(CONTROLLINO_R3, LOW);
   digitalWrite(CONTROLLINO_R4, LOW);
 
+  // start Serial1 for the data output
+  Serial1.begin(9600);
+
   #ifdef DEBUG
   Serial.println("initialize(void) exiting");
   #endif
@@ -1238,6 +1248,152 @@ void restart_wire()
   Wire.onReceive(receiveEvent); //register event
   Wire.onRequest(requestEvent);
 }
+
+
+
+/*
+typedef struct data_point_s
+{
+  uint16_t  ts; // timestamp when log was created - fits in a 16bit value
+  uint16_t  sv1; // Sv at the time log was created - in the fomat read from accu
+  uint16_t  pv1; // Pv at the time the log was created - in the fomat read from accu
+  uint16_t  sv2; // Sv at the time log was created - in the fomat read from accu
+  uint16_t  pv2; // Pv at the time the log was created - in the fomat read from accu
+  uint16_t  sv3; // Sv at the time log was created - in the fomat read from accu
+  uint16_t  pv3; // Pv at the time the log was created - in the fomat read from accu
+  uint16_t  sv4; // Sv at the time log was created - in the fomat read from accu
+  uint16_t  pv4; // Pv at the time the log was created - in the fomat read from accu
+  uint8_t   r1:1; // state of relay 1 // 0 = LOW, 1 = HIGH
+  uint8_t   r2:1; // state of relay 2
+  uint8_t   r3:1; // state of relay 3
+  uint8_t   r4:1; // state of relay 4
+} data_point_t;
+ */
+void dumpTempData(void)
+{
+  char buff[92];
+  char fbuffs[64];
+  
+  
+  if( (0 == Serial1.available()) )
+  {
+    #ifdef DEBUG
+    Serial.println("no request for dump temperature data");
+    #endif
+
+    return;
+  }
+
+  #ifdef DEBUG
+  Serial.println("dumping temperature data");
+  #endif
+
+  // clear input data from the Serial1 UART - this is char that let us know they want the data
+  while( (0 < Serial1.available()) )
+  {
+    Serial1.read();
+  }
+
+/* 
+data_points[data_points_index]
+data_points_index = (data_points_index + 1) % MAX_NUM_DATA_POINTS;
+*/
+
+  // dump out the data in comma separated format
+  // time stamp, sv1, pv1, sv2, pv2, sv3, pv3, sv4, pv4
+
+  Serial1.println("");
+  Serial1.println("");
+  Serial1.println("begin ----------------------");
+
+  // handle wrap-around in the stats data struct
+  // start at data_points_index
+  // end at data_points_index -1
+
+  // probably a defect here ..
+  // will write out my thinking
+  // because there is wrap around in this structure, need to find where to start dumping and where to stop dumping
+  //
+  // so if time stamp is 0 at data_points_index - have not wrapped around yet
+  int start = 0;
+  int end = 0;
+  if( (0 == data_points[data_points_index].ts) )
+  {
+    start = 0;
+    end = MAX_NUM_DATA_POINTS;
+  } else
+  {
+    // have wrapped around data_points_index is pointiong at the youngest/earliest entry
+    start = data_points_index;
+    end = (data_points_index = 0 ? (MAX_NUM_DATA_POINTS - 1) : (data_points_index - 1) % MAX_NUM_DATA_POINTS);
+  }
+
+
+  Serial1.println("ts,pv1,sv1,pv2,sv2,pv3,sv3,pv4,sv4");
+
+  for(int i = 0, index = start; ((i < MAX_NUM_DATA_POINTS) && (index != end)); i++)
+  {
+    // if no data at this line . . split !
+    if( (0 == data_points[index].ts) )
+      break;
+      
+    // build one line of output
+    memset(buff, '\0', sizeof(buff));
+    memset(fbuffs, '\0', sizeof(fbuffs));
+
+    sprintf(buff, "%hu, %s, %s, %s, %s, %s, %s, %s, %s",
+      data_points[index].ts,
+      dtostrf(convertToFloat(data_points[index].pv1), 6, 2, &fbuffs[0]),
+      dtostrf(convertToFloat(data_points[index].sv1), 6, 2, &fbuffs[8]),
+      dtostrf(convertToFloat(data_points[index].pv2), 6, 2, &fbuffs[16]),
+      dtostrf(convertToFloat(data_points[index].sv2), 6, 2, &fbuffs[24]),
+      dtostrf(convertToFloat(data_points[index].pv3), 6, 2, &fbuffs[32]),
+      dtostrf(convertToFloat(data_points[index].sv3), 6, 2, &fbuffs[40]),
+      dtostrf(convertToFloat(data_points[index].pv4), 6, 2, &fbuffs[48]),
+      dtostrf(convertToFloat(data_points[index].sv4), 6, 2, &fbuffs[56])
+    );
+
+    Serial1.println(buff);
+    Serial1.flush();
+
+    index = (index + 1) % MAX_NUM_DATA_POINTS;
+  }
+
+  Serial1.println("");
+  Serial1.println("");
+  Serial1.println("end ----------------------");
+}
+
+
+float convertToFloat(uint16_t val)
+{
+  float f = 0.0;
+
+  
+  if( (0x8000 & val) )
+  {
+    #ifdef DEBUG_CONV
+    Serial.println("handling negative number conversion");
+    #endif
+
+    f = (float)((val+512)&1023) - 512.0 ;
+    f = f / (float)10;
+
+  } else
+  {
+    #ifdef DEBUG_CONV
+    Serial.println("handling positive number conversion");
+    #endif
+
+    f = (float)val / (float)10;
+  }
+
+  #ifdef DEBUG
+  Serial.print("returning : "); Serial.println(f);
+  #endif
+  return(f);
+}
+
 
 /* End of the example. Visit us at https://controllino.biz/ or contact us at info@controllino.biz if you have any questions or troubles. */
 
