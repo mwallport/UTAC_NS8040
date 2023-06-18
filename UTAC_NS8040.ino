@@ -1,16 +1,27 @@
 #include "UTAC_NS8040.h"
 
+//
 // UTAC_v1.03_230107
 // - fixed the calcCRC to be htons on the send
 // - enabled DEBUG
+//
 
+// debug the time stamping of the logged data
 #define DEBUG_TS
+
+// debug !
 //#define DEBUG
+
+// debug the I2C bus usage
 #define DEBUG_I2C
 
 volatile int32_t msgs_received = 0;
 volatile int32_t bad_msgs = 0;
 
+//
+// set by the ISR for Wire I2C communication see 
+// see void receiveEvent(int howMany)
+//
 bool process_cmd_buff = false;
 
 /*******************************************************************************
@@ -43,22 +54,23 @@ void setup()
 *******************************************************************************/
 void loop()
 {
+  // read the accuthermos and store their Sv and Pv
   runReadStateMachine();
 
-  #ifdef USE_I2C
+  // if the ISR ran, process_cmd_buff will be true, go process the pkt
   if( (true == process_cmd_buff) )
   {
     process_cmd_buff = false;
     handleRS232Cmd();
   }
-  #else
-  {
-    handleRS232Cmd();
-  }
-  #endif
 
+  //
+  // check for any input on the Serial1 port, and if present write out the
+  // stored temperature data
+  //
   dumpTempData();
 
+  // throttle - Bob don't like these
   delay(1000);
 }
 
@@ -93,7 +105,7 @@ void runReadStateMachine(void)
 
   // enter the state machine
   currentQuery = 0;
-  readState = TX_READ_REQ_STATE;
+  readState = TX_READ_REQ_STATE;  // initialize readState to 'begin'
   done = false;
   
 
@@ -144,7 +156,14 @@ void runReadStateMachine(void)
 
             done = true;
 
-            /* this erases history  -- BUT IS HOW IT USED TO BE -- put this back maybe */
+            //
+            // the relay array holds history of the whether the relay would be opend or not.
+            // when the history is all 0 - open the relay
+            // when the history is all 1 - close the relay
+            // currently the history is 3 samples deep - which is ~3 seconds
+            //
+
+            /* following erases history  -- BUT IS HOW IT USED TO BE -- put this back maybe */
             for (int i = 0; i < 2; i++)
             {
               relay1Array[i + 1] = relay1Array[i];
@@ -152,6 +171,12 @@ void runReadStateMachine(void)
               relay3Array[i + 1] = relay3Array[i];
               relay4Array[i + 1] = relay4Array[i];
             }
+
+            //
+            // these if blocks check the Pv versus Sv of each accuthermo
+            // if the delta is within allowable range of SV_PV_DELTA - relayArrays get 1
+            // if the delta is outside allowable range of SV_PV_DELTA - relayArrays get 0
+            //
             if (abs((int16_t)(ModbusSlaveRegisters[0] - ModbusSlaveRegisters[1])) <= SV_PV_DELTA)
               relay1Array[0] = 1;
             else
@@ -173,7 +198,12 @@ void runReadStateMachine(void)
               relay4Array[0] = 0;
     
             //
-            // udpate the relays
+            // udpate the relays - use the stored history to 'smooth' the curve
+            // and avoid spike in either temperature direction
+            //
+            // - if all 1 enable relay
+            // - if all 0 disable relay
+            // - else do nothing 
             //
             if (relay1Array[0] == 1 && relay1Array[1] == 1 && relay1Array[2] == 1) 
               digitalWrite(CONTROLLINO_R1, HIGH);
@@ -222,6 +252,7 @@ void runReadStateMachine(void)
             }
           } else //end if (currentQuery == 3)
           {
+            // have not sent all mod bus queries
             // send the next ModbusQuery
             currentQuery++;
             readState = TX_READ_REQ_STATE;
@@ -329,165 +360,6 @@ void dumpCurrentSvPvHistoryAndRelays(void)
   Serial.println("");
   
   #endif
-}
-
-
-/*******************************************************************************
-*
-* - pkt looks like this
-* | Address | Message | Command | Value   | CRC-16  |
-* |  8 bits | 8 bits  | 16 bits | 16 bits | 16 bits |
-* |  01H  | 06H   | 01H.2CH | 03H.84H | xxxx  |
-*
-* there is no length member, so until further notice, always read 8 bytes
-*
-* rx_bytes is the count of bytes expected to be read
-*
-*******************************************************************************/
-int16_t readCmdFromRS232(uint8_t* buff, int32_t rx_bytes, unsigned long tmo)
-{
-  bool timedOut     = false;
-  int32_t bytes_read = 0;
-  unsigned long startTime = millis();
-
-
-  #ifdef DEBUG
-  Serial.print("readCmdFromRS232 tmo is: "); Serial.println(tmo);
-  #endif
-
-
-/*
-* - pkt looks like this
-* | Address | Message | Command | Value   | CRC-16  |
-* |  8 bits | 8 bits  | 16 bits | 16 bits | 16 bits |
-* |  01H  | 06H   | 01H.2CH | 03H.84H | xxxx  |
- */
-  //
-  // if nothing on the wire, don't try to read
-  //
-  if( (0 == rs232port->available()) )
-  {
-    #ifdef DEBUG
-    Serial.println("no data available in rs232");
-    #endif
-
-    return(0);
-  }
-
-
-  //
-  // try to read a packet for a total of TimeoutMs milliseconds
-  // but only start to read the bytes if data is present
-  //
-  while( (!timedOut) && (bytes_read < rx_bytes) ) 
-  {
-    if( ((millis() - startTime) > tmo) )
-    {
-      timedOut = true;
-    } else
-    {
-      if( (rs232port->available()) )
-      {
-        buff[bytes_read++] = rs232port->read();
-
-      } else
-      {
-        //
-        // no data available, wait a bit before checking again withing the
-        // tmo window
-        //
-        delay(128);
-      }
-    }
-  }
-
-
-  #ifdef DEBUG
-  Serial.print("readCmdFromRS232 received bytes: "); Serial.print(bytes_read);
-  Serial.print(", wanted rx_bytes: "); Serial.println(rx_bytes);
-  Serial.println("byte received: ");
-  for(uint8_t i = 0; i < bytes_read; i++)
-  {
-    Serial.print(" 0x"); Serial.print(buff[i], 16);
-  }
-  Serial.println("");
-  #endif
-
-  if( (true == timedOut) )
-  {
-    #ifdef DEBUG
-    Serial.print("readCmdFromRS232 timed out reading rs232");
-    #endif
-
-    // we timed out reading bytes, Rx buffer is emtpy, no need flush
-
-    return(-1);
-  }
-
-  return(bytes_read);
-}
-
-
-/*******************************************************************************
-*
-*
-*
-*******************************************************************************/
-bool writeResponseToRS232(uint8_t* buff, uint16_t length)
-{
-  bool retVal = true;
-  int bytes_written = 0;
-
-
-  #ifdef DEBUG
-  Serial.print("writeResponseToRS232 writing pkt:");
-  for(int i = 0; i < length; i++)
-  {
-    Serial.print(" "); Serial.print(buff[i], 16);
-  }
-  Serial.println("");
-  #endif
-  
-  bytes_written = rs232port->write(buff, length);
-
-  if( (bytes_written != length) )
-  {
-    #ifdef DEBUG
-    Serial.print("writeResponseToRS232 failed, wrote: "); Serial.print(bytes_written);
-    Serial.print(" bytes of requested "); Serial.println(length);
-    #endif
-
-    retVal  = false;
-  } else
-  {
-    #ifdef DEBUG
-    Serial.print("writeResponseToRS232 success, wrote: "); Serial.print(bytes_written);
-    Serial.print(" bytes of requested "); Serial.println(length);
-    #endif
-
-    retVal = true;
-  }
-
-  return(retVal);
-}
-
-
-/*******************************************************************************
-*
-* remove all bytes from the Rx buffer
-*
-* called when the last packet read from the buffer was junk, this will remove
-* the rest of the junk
-*
-*******************************************************************************/
-void flushRS232(void)
-{
-  uint8_t junk;
-
-  while( (0 != rs232port->available()) )
-  {
-    junk = rs232port->read();
-  }
 }
 
 
@@ -738,54 +610,34 @@ void handleRS232Cmd(void)
   bool  outcome = true; // overall operation outcome
 
 
-  #ifndef USE_I2C
   //
-  // read cmd from RS232
-  //
-  memset(rx_buff, '\0', MAX_CMD_BUFF_LENGTH + 1);  // MAX_CMD_BUFF_LENGTH + 1
-
-  buff_len = readCmdFromRS232(rx_buff);
-
-  if( (0 >= buff_len) )  // this is -1 or 0 return from readCmdFromRS232
-  {
-    #ifdef DEBUG
-    Serial.println("handleRS232Cmd no rs232 pkt received");
-    #endif
-
-    // no pkt received
-    return;
-  }
-  #else
-  //
-  // have the rx_buff loaded with bytes from the i2c
+  // have the rx_buff loaded with bytes from the i2c - set buff_len
   //
   buff_len = MAX_CMD_BUFF_LENGTH;
-  #endif
 
 
   //
   // for now, we're only handling the 8 byte long cmd from email transaction
   //
+  // - pkt looks like this
+  // | Address | Message | Command | Value   | CRC-16  |
+  // |  8 bits | 8 bits  | 16 bits | 16 bits | 16 bits |
+  // |  01H  | 06H   | 01H.2CH | 03H.84H | xxxx  |
+  // 
+  // there is no length member, so until further notice, always read 8 bytes
+  // 
+  // rx_bytes is the count of bytes expected to be read
+  // 
   p_utac_cmd  = (utac_cmd_t*)rx_buff; // cast into the buffer
 
   if( (false == validUTACCmd(p_utac_cmd)) )
   {
-
-
-    #ifndef USE_I2C
-    #ifdef DEBUG
-    Serial.print("handleRS232Cmd invalid UTAC cmd received, flush rs232");
-    #endif
-    
-    flushRS232();
-    #else
     #ifdef DEBUG
     Serial.print("\n\n\nhandleRS232Cmd invalid UTAC cmd received, flush Wire\n\n");
     #endif
     
     flushWire();
     p_utac_cmd->addr = 0xff;
-    #endif
     
     #ifdef DEBUG
     Serial.println("sending back modified pkt to have 0xffff for cmd and val to indicate fail");
@@ -795,22 +647,13 @@ void handleRS232Cmd(void)
     p_utac_cmd->cmd = 0xFFFF;
     p_utac_cmd->val = 0xFFFF;
     p_utac_cmd->crc = htons(calcCRC16((uint8_t*)(p_utac_cmd), sizeof(utac_cmd_t) - 2));
+
+    //
+    // the reply will be sent when reply ISR is invoked - only setting up the 
+    // buffer's contents here
+    //
     
-    // send back the pkt
-    #ifndef USE_I2C
-    if( (false == writeResponseToRS232((uint8_t*)p_utac_cmd, sizeof(utac_cmd_t))) )
-    {
-      #ifdef DEBUG
-      Serial.println("failed write for RS232 response");
-      #endif
-    } else
-    {
-      #ifdef DEBUG
-      Serial.println("successful write for RS232 response");
-      #endif        
-    }
     return;
-    #endif
   }
 
   //
@@ -818,7 +661,7 @@ void handleRS232Cmd(void)
   //
   switch(ntohs(p_utac_cmd->cmd))
   {
-    case UTAC_SET_TEMP_CMD:
+    case UTAC_SET_TEMP_CMD: // this is the only command !
     {
       #ifdef DEBUG
       Serial.print("handleRS232Cmd found UTAC_SET_TEMP_CMD: ");
@@ -849,6 +692,7 @@ void handleRS232Cmd(void)
         Serial.print(", updating it to :"); Serial.println(ntohs(p_utac_cmd->val), 16);
         #endif
 
+        // update the Sv array for 'this' set Sv command
         set_values[target_id] = ntohs(p_utac_cmd->val);
       }
 
@@ -873,8 +717,11 @@ void handleRS232Cmd(void)
         #ifdef DEBUG
         Serial.println("writing to all Ids");
         #endif
-        
-        // run the write state machine for all Ids
+
+        //
+        // run the write state machine for all Ids - not using the broadcast
+        // address - never tested it, so call Sv for each accuthermo individually
+        //
         for(int i= 0; i < MAX_SLAVE_IDS; i++)
         {
           if( (false == runWriteStateMachine(i)))
@@ -933,20 +780,7 @@ void handleRS232Cmd(void)
         #endif
       }
 
-      // send back the pkt
-      #ifndef USE_I2C
-      if( (false == writeResponseToRS232((uint8_t*)p_utac_cmd, sizeof(utac_cmd_t))) )
-      {
-        #ifdef DEBUG
-        Serial.println("failed write for RS232 response");
-        #endif
-      } else
-      {
-        #ifdef DEBUG
-        Serial.println("successful write for RS232 response");
-        #endif        
-      }
-      #endif
+      // the ISR for Wire communication will write back this buff
       break;
     }
 
@@ -956,6 +790,8 @@ void handleRS232Cmd(void)
       Serial.print("handleRS232Cmd unhandled cmd: ");
       Serial.println(p_utac_cmd->cmd);
       #endif
+
+      // and the ISR invoked for Wire communication will write back this buff
       break;
     }
   }
@@ -976,26 +812,10 @@ void initialize(void)
   //
   // startup the RS_232 connection
   //
-#ifdef USE_I2C //BS
-  #ifdef DEBUG
-  Serial.println("USE_I2C is defined...");
-  #endif
-  
   Wire.begin(I2C_ADDR);
   Wire.setClock(100000);
   Wire.onReceive(receiveEvent); //register event
   Wire.onRequest(requestEvent);
-  rs232port = &Wire;
- /* 
-  rs232port->begin(I2C_ADDR);
-  rs232port->onReceive(receiveEvent); //register event
-  rs232port->onRequest(requestEvent);
-*/
-#else
-  Serial.println("USE_I2C is NOT defined...");
-
-  rs232port->begin(RS232_SPEED);
-#endif
 
   //
   // initialize the real time clock (RTC)
@@ -1250,25 +1070,6 @@ void restart_wire()
 }
 
 
-
-/*
-typedef struct data_point_s
-{
-  uint16_t  ts; // timestamp when log was created - fits in a 16bit value
-  uint16_t  sv1; // Sv at the time log was created - in the fomat read from accu
-  uint16_t  pv1; // Pv at the time the log was created - in the fomat read from accu
-  uint16_t  sv2; // Sv at the time log was created - in the fomat read from accu
-  uint16_t  pv2; // Pv at the time the log was created - in the fomat read from accu
-  uint16_t  sv3; // Sv at the time log was created - in the fomat read from accu
-  uint16_t  pv3; // Pv at the time the log was created - in the fomat read from accu
-  uint16_t  sv4; // Sv at the time log was created - in the fomat read from accu
-  uint16_t  pv4; // Pv at the time the log was created - in the fomat read from accu
-  uint8_t   r1:1; // state of relay 1 // 0 = LOW, 1 = HIGH
-  uint8_t   r2:1; // state of relay 2
-  uint8_t   r3:1; // state of relay 3
-  uint8_t   r4:1; // state of relay 4
-} data_point_t;
- */
 void dumpTempData(void)
 {
   char buff[92];
